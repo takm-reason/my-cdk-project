@@ -8,6 +8,75 @@
 * AWS CLI（設定済み）
 * AWS CDK CLI (`npm install -g aws-cdk`)
 
+## IAMユーザーのセットアップ
+
+このプロジェクトを実行するには、適切な権限を持つIAMユーザーが必要です。以下の手順で設定を行ってください。
+
+### 1. IAMユーザーの作成
+
+1. AWSマネジメントコンソールにサインインします。
+2. IAMコンソール（https://console.aws.amazon.com/iam/）に移動します。
+3. 左側のナビゲーションペインで「ユーザー」を選択します。
+4. 「ユーザーを作成」をクリックします。
+5. ユーザー名を入力します（例：`cdk-deployer`）。
+6. アクセスキーの作成にチェックを入れ、「次へ」をクリックします。
+
+### 2. 必要な権限の付与
+
+以下のインラインポリシーをユーザーに追加してください：
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:*",
+                "s3:*",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:PassRole",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "ec2:*",
+                "ssm:*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+**注意**: このポリシーは最小限の権限セットです。実際のデプロイ時に必要に応じて権限を追加してください。
+
+### 3. AWS認証情報の設定
+
+作成したIAMユーザーの認証情報をローカル環境に設定します：
+
+```bash
+aws configure
+```
+
+プロンプトで以下の情報を入力してください：
+- AWS Access Key ID: [作成したIAMユーザーのアクセスキーID]
+- AWS Secret Access Key: [作成したIAMユーザーのシークレットアクセスキー]
+- Default region name: [使用するリージョン（例：ap-northeast-1）]
+- Default output format: json
+
+### 4. 認証情報の確認
+
+設定が正しく完了したことを確認するには：
+
+```bash
+aws sts get-caller-identity
+```
+
+このコマンドで、設定したIAMユーザーの情報が表示されることを確認してください。
+
 ## セットアップ
 
 プロジェクトをセットアップするには以下のコマンドを実行してください：
