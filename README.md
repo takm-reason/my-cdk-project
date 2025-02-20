@@ -23,6 +23,7 @@
 
 ### 2. 必要な権限の付与
 
+#### マネジメントコンソールの場合
 以下のインラインポリシーをユーザーに追加してください：
 
 ```json
@@ -34,16 +35,33 @@
             "Action": [
                 "cloudformation:*",
                 "s3:*",
-                "iam:CreateRole",
-                "iam:DeleteRole",
-                "iam:GetRole",
-                "iam:PutRolePolicy",
-                "iam:DeleteRolePolicy",
-                "iam:PassRole",
-                "iam:AttachRolePolicy",
-                "iam:DetachRolePolicy",
+                "iam:*",
                 "ec2:*",
-                "ssm:*"
+                "elasticloadbalancing:*",
+                "ecs:*",
+                "ecr:*",
+                "rds:*",
+                "elasticache:*",
+                "cloudfront:*",
+                "wafv2:*",
+                "waf:*",
+                "shield:*",
+                "route53:*",
+                "acm:*",
+                "ssm:*",
+                "kms:*",
+                "logs:*",
+                "cloudwatch:*",
+                "secretsmanager:*",
+                "lambda:*",
+                "sns:*",
+                "sqs:*",
+                "apigateway:*",
+                "dynamodb:*",
+                "elasticfilesystem:*",
+                "events:*",
+                "application-autoscaling:*",
+                "tag:*"
             ],
             "Resource": "*"
         }
@@ -51,7 +69,69 @@
 }
 ```
 
-**注意**: このポリシーは最小限の権限セットです。実際のデプロイ時に必要に応じて権限を追加してください。
+#### CloudShellの場合
+以下のコマンドを実行してポリシーを作成し、ユーザーにアタッチします：
+
+```bash
+# ポリシードキュメントをファイルに保存
+cat << 'EOF' > policy.json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:*",
+                "s3:*",
+                "iam:*",
+                "ec2:*",
+                "elasticloadbalancing:*",
+                "ecs:*",
+                "ecr:*",
+                "rds:*",
+                "elasticache:*",
+                "cloudfront:*",
+                "wafv2:*",
+                "waf:*",
+                "shield:*",
+                "route53:*",
+                "acm:*",
+                "ssm:*",
+                "kms:*",
+                "logs:*",
+                "cloudwatch:*",
+                "secretsmanager:*",
+                "lambda:*",
+                "sns:*",
+                "sqs:*",
+                "apigateway:*",
+                "dynamodb:*",
+                "elasticfilesystem:*",
+                "events:*",
+                "application-autoscaling:*",
+                "tag:*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+EOF
+
+# IAMポリシーの作成
+aws iam create-policy --policy-name cdk-deployer-policy --policy-document file://policy.json
+
+# ポリシーをユーザーにアタッチ
+aws iam attach-user-policy --user-name cdk-deployer --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/cdk-deployer-policy
+
+# AWS管理ポリシー「PowerUserAccess」もアタッチ（オプション：より包括的な権限が必要な場合）
+aws iam attach-user-policy --user-name cdk-deployer --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
+```
+
+**注意**: 
+- このポリシーには、プロジェクトで使用する可能性のあるすべてのAWSサービスへのフルアクセス権限が含まれています。
+- 本番環境では、必要最小限の権限に制限することを推奨します。
+- より制限的な権限が必要な場合は、各アクションやリソースを個別に指定してください。
+- 大規模なプロジェクトや本番環境では、AWS管理ポリシー「PowerUserAccess」の使用も検討してください。
 
 ### 3. AWS認証情報の設定
 
