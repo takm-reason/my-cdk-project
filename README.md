@@ -87,19 +87,106 @@ SCALE=large STAGE=prod cdk diff
 ## スケール構成の詳細
 
 ### 小規模構成 (Small Scale)
-小規模なアプリケーション向けの構成です。
+シンプルで効率的な小規模アプリケーション向けの構成です。
+
 * 定義ファイル: `lib/small-scale-stack.ts`
-* 実装予定の内容はこれから定義されます
+* 想定ユーザー規模：月間アクティブユーザー1,000人以下
+* 概算コスト：月額 $100-200 程度
+  - ECS Fargate (1-2タスク): $30-60
+  - RDS (t4g.micro): $25
+  - ALB: $20
+  - S3: $1-5
+  - その他 (データ転送など): $20-30
+* 主な特徴：
+  - **ECS (Fargate)**
+    - 1〜2タスク
+    - 基本的に固定スケール（必要に応じて軽いAuto Scaling）
+    - Monolithicなアプリケーションアーキテクチャをサポート
+  - **ALB (Application Load Balancer)**
+    - 単一のパブリックALB
+    - ECS Fargateのターゲットグループに紐付け
+    - HTTP/HTTPSリスナー設定
+  - **RDS (Single-AZ)**
+    - インスタンスタイプ: t4g.micro / t4g.small
+    - シングルAZで運用
+    - 必要に応じてAurora Serverless v2への移行も可能
+  - **S3**
+    - 画像・静的ファイルの保存用
+    - シンプルな構成（CloudFrontなし）
 
 ### 中規模構成 (Medium Scale)
-中規模なアプリケーション向けの構成です。
+成長するアプリケーション向けの拡張性と可用性を備えた構成です。
+
 * 定義ファイル: `lib/medium-scale-stack.ts`
-* 実装予定の内容はこれから定義されます
+* 想定ユーザー規模：月間アクティブユーザー1,000-10,000人
+* 概算コスト：月額 $500-1,000 程度
+  - ECS Fargate (2-5タスク): $100-250
+  - Aurora Serverless v2: $200-300
+  - ElastiCache: $50
+  - ALB: $20
+  - CloudFront + S3: $50-100
+  - WAF: $50
+  - その他 (データ転送など): $100-200
+* 主な特徴：
+  - **ECS (Fargate) + Auto Scaling**
+    - 2〜5タスク（負荷に応じて自動スケール）
+    - CPU/メモリ使用率に基づくAuto Scaling
+    - 複数AZにタスクを配置
+  - **ALB (Application Load Balancer)**
+    - 複数AZにタスクを分散配置
+    - 複数のターゲットグループ（APIとWebの分離）
+  - **Aurora Serverless v2**
+    - 自動スケーリング機能
+    - マルチAZ構成で高可用性を確保
+  - **ElastiCache (Redis)**
+    - セッション管理とキャッシュ用途
+    - インスタンスタイプ: cache.t4g.small〜medium
+  - **S3 + CloudFront**
+    - 静的コンテンツの配信最適化
+    - グローバルなエッジキャッシュの活用
+  - **WAF**
+    - 基本的なセキュリティ保護
+    - SQLインジェクションやDDoS対策
 
 ### 大規模構成 (Large Scale)
-大規模なアプリケーション向けの構成です。
+高可用性、高性能、グローバル展開に対応した大規模アプリケーション向けの構成です。
+
 * 定義ファイル: `lib/large-scale-stack.ts`
-* 実装予定の内容はこれから定義されます
+* 想定ユーザー規模：月間アクティブユーザー10,000人以上
+* 概算コスト：月額 $3,000-10,000以上
+  - ECS Fargate (10-50タスク): $500-2,500
+  - Aurora (r6g.large x 3): $1,000-1,500
+  - ElastiCache Cluster: $500-1,000
+  - 複数ALB: $100
+  - CloudFront + S3: $200-500
+  - WAF + Shield Advanced: $3,000
+  - CI/CD + 監視: $100-200
+  - その他 (データ転送など): $500-1,000
+* 主な特徴：
+  - **ECS (Fargate) + 大規模Auto Scaling**
+    - 10〜50タスク（負荷に応じて自動スケール）
+    - 複数AZにまたがる配置
+    - マイクロサービスアーキテクチャをサポート
+  - **複数のALB**
+    - APIとフロントエンド用の個別ALB
+    - 高度なルーティング設定
+    - 大規模トラフィックへの対応
+  - **Aurora + Read Replica**
+    - インスタンスタイプ: r6g.large以上
+    - 読み書き分離による負荷分散
+    - グローバルデータベース対応
+  - **ElastiCache (Redis Cluster)**
+    - クラスターモードによる水平スケーリング
+    - 大規模セッション管理とキャッシュ
+    - インスタンスタイプ: cache.r6g.large以上
+  - **S3 + CloudFront + Shield**
+    - グローバルコンテンツ配信
+    - 大規模データ転送の最適化
+    - DDoS保護
+  - **統合監視とCI/CD**
+    - CloudWatch詳細モニタリング
+    - 自動デプロイパイプライン
+    - Systems Managerによる構成管理
 
 ## 開発ガイド
 
