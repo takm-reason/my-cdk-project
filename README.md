@@ -169,13 +169,10 @@ npm install
 npm run build
 
 # CDKアプリケーションの初期化（初回のみ）
-cdk bootstrap
+npm run cdk bootstrap
 
-# スタックの差分確認
-cdk diff
-
-# スタックのデプロイ
-cdk deploy
+# スタックのデプロイ（開発環境の小規模構成の場合）
+npm run cdk deploy -- --context project-name=my-app --require-approval never
 ```
 
 ## プロジェクト構造
@@ -227,21 +224,21 @@ cdk deploy
 #### デプロイ例（コンテキストパラメータ）
 
 ```bash
-# 開発環境に小規模構成をデプロイ
-cdk deploy -c scale=small -c stage=dev -c project-name=my-app
+# 開発環境に小規模構成をデプロイ（承認不要）
+npm run cdk deploy -- --context project-name=my-app --require-approval never
 
 # ステージング環境に中規模構成をデプロイ
-cdk deploy -c scale=medium -c stage=staging -c project-name=my-app
+npm run cdk deploy -- --context scale=medium --context stage=staging --context project-name=my-app
 
 # 本番環境に大規模構成をデプロイ
-cdk deploy -c scale=large -c stage=prod -c project-name=my-app
+npm run cdk deploy -- --context scale=large --context stage=prod --context project-name=my-app
 ```
 
 #### 差分確認例（コンテキストパラメータ）
 
 ```bash
 # 本番環境の大規模構成の差分を確認
-cdk diff -c scale=large -c stage=prod -c project-name=my-app
+npm run cdk diff -- --context scale=large --context stage=prod --context project-name=my-app
 ```
 
 ### 2. 環境変数（従来方式）
@@ -260,13 +257,13 @@ cdk diff -c scale=large -c stage=prod -c project-name=my-app
 
 ```bash
 # 開発環境に小規模構成をデプロイ
-SCALE=small STAGE=dev cdk deploy
+SCALE=small STAGE=dev npm run cdk deploy
 
 # ステージング環境に中規模構成をデプロイ
-SCALE=medium STAGE=staging cdk deploy
+SCALE=medium STAGE=staging npm run cdk deploy
 
 # 本番環境に大規模構成をデプロイ
-SCALE=large STAGE=prod cdk deploy
+SCALE=large STAGE=prod npm run cdk deploy
 ```
 
 
@@ -274,7 +271,7 @@ SCALE=large STAGE=prod cdk deploy
 
 ```bash
 # 本番環境の大規模構成の差分を確認
-SCALE=large STAGE=prod cdk diff
+SCALE=large STAGE=prod npm run cdk diff
 ```
 
 ## スケール構成の詳細
@@ -389,8 +386,8 @@ SCALE=large STAGE=prod cdk diff
 2. リソースを追加
 3. 必要に応じてテストを追加
 4. `npm run build`でコンパイル
-5. `cdk diff`で変更内容を確認
-6. `cdk deploy`でデプロイ
+5. `npm run cdk diff`で変更内容を確認
+6. `npm run cdk deploy`でデプロイ
 
 ## セキュリティのベストプラクティス
 
@@ -406,7 +403,7 @@ SCALE=large STAGE=prod cdk diff
 
 3. その他
    * IAMポリシーは最小権限の原則に従う
-   * 本番環境へのデプロイ前に`cdk diff`で変更内容を必ず確認
+   * 本番環境へのデプロイ前に`npm run cdk diff`で変更内容を必ず確認
    * 重要なリソースには削除保護を設定
 
 ## トラブルシューティング
@@ -415,7 +412,7 @@ SCALE=large STAGE=prod cdk diff
 
 1. デプロイエラー
    * AWSクレデンシャルの確認
-   * `cdk bootstrap`の実行確認
+   * `npm run cdk bootstrap`の実行確認
    * CloudFormationコンソールでエラー詳細確認
 
 2. TypeScriptエラー
