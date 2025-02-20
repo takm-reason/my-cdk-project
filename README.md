@@ -51,8 +51,51 @@ cdk deploy
 ## スケール構成の選択とデプロイ
 
 このプロジェクトは3つのスケール構成（小規模、中規模、大規模）と3つのステージ（開発、ステージング、本番）をサポートしています。
+パラメータの指定には以下の2つの方法があります：
 
-### 環境変数
+### 1. CDKコンテキストパラメータ（推奨）
+
+以下のコンテキストパラメータを使用してスタックを設定できます：
+
+- `scale`: デプロイするスケールサイズを指定
+  - `small`: 小規模構成
+  - `medium`: 中規模構成
+  - `large`: 大規模構成
+
+- `stage`: デプロイ環境を指定
+  - `dev`: 開発環境
+  - `staging`: ステージング環境
+  - `prod`: 本番環境
+
+- `project-name`: プロジェクト名を指定（オプション、デフォルト: 'default'）
+
+指定したパラメータは以下のAWSタグとして自動的にすべてのリソースに付与されます：
+- `stage`: 指定したステージ名
+- `project-name`: 指定したプロジェクト名
+
+これらのタグを使用することで、リソースの環境やプロジェクトの所属を簡単に識別できます。
+
+#### デプロイ例（コンテキストパラメータ）
+
+```bash
+# 開発環境に小規模構成をデプロイ
+cdk deploy -c scale=small -c stage=dev -c project-name=my-app
+
+# ステージング環境に中規模構成をデプロイ
+cdk deploy -c scale=medium -c stage=staging -c project-name=my-app
+
+# 本番環境に大規模構成をデプロイ
+cdk deploy -c scale=large -c stage=prod -c project-name=my-app
+```
+
+#### 差分確認例（コンテキストパラメータ）
+
+```bash
+# 本番環境の大規模構成の差分を確認
+cdk diff -c scale=large -c stage=prod -c project-name=my-app
+```
+
+### 2. 環境変数（従来方式）
 
 - `SCALE`: デプロイするスケールサイズを指定
   - `small`: 小規模構成
@@ -64,7 +107,7 @@ cdk deploy
   - `staging`: ステージング環境
   - `prod`: 本番環境
 
-### デプロイ例
+#### デプロイ例（環境変数）
 
 ```bash
 # 開発環境に小規模構成をデプロイ
@@ -76,6 +119,7 @@ SCALE=medium STAGE=staging cdk deploy
 # 本番環境に大規模構成をデプロイ
 SCALE=large STAGE=prod cdk deploy
 ```
+
 
 ### 差分確認例
 
