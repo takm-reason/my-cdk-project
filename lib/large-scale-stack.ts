@@ -19,10 +19,21 @@ import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as shield from 'aws-cdk-lib/aws-shield';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import { ResourceRecorder } from './utils/resource-recorder';
+
+export interface LargeScaleStackProps extends cdk.StackProps {
+    projectName: string;
+}
 
 export class LargeScaleStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: LargeScaleStackProps) {
         super(scope, id, props);
+
+        const recorder = new ResourceRecorder(props.projectName);
+
+        // スタック全体にタグを追加
+        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('Scale', 'large');
 
         // VPCの作成（マルチAZ）
         const vpc = new ec2.Vpc(this, 'LargeScaleVPC', {
@@ -47,6 +58,12 @@ export class LargeScaleStack extends cdk.Stack {
             ],
         });
 
+        // VPCにタグを追加
+        cdk.Tags.of(vpc).add('Name', `${props.projectName}-large-vpc`);
+
+        // VPC情報の記録
+        recorder.recordVpc(vpc, this.stackName);
+
         // Aurora Global Databaseの作成
         const auroraCluster = new rds.DatabaseCluster(this, 'AuroraCluster', {
             engine: rds.DatabaseClusterEngine.auroraPostgres({
@@ -59,7 +76,7 @@ export class LargeScaleStack extends cdk.Stack {
                     subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
                 },
             },
-            instances: 3, // 1 Writer + 2 Readers
+            instances: 3,
             backup: {
                 retention: cdk.Duration.days(30),
                 preferredWindow: '03:00-04:00',
@@ -67,6 +84,12 @@ export class LargeScaleStack extends cdk.Stack {
             cloudwatchLogsRetention: logs.RetentionDays.THREE_MONTHS,
             storageEncrypted: true,
         });
+
+        // Auroraクラスターにタグを追加
+        cdk.Tags.of(auroraCluster).add('Name', `${props.projectName}-large-aurora`);
+
+        // Aurora情報の記録
+        recorder.recordRds(auroraCluster, this.stackName);
 
         // ElastiCache (Redis) Clusterの作成
         const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
@@ -102,6 +125,12 @@ export class LargeScaleStack extends cdk.Stack {
             cacheSubnetGroupName: redisSubnetGroup.ref,
         });
 
+        // Redisクラスターにタグを追加
+        cdk.Tags.of(redisCluster).add('Name', `${props.projectName}-large-redis`);
+
+        // Redis情報の記録
+        recorder.recordElastiCache(redisCluster, this.stackName);
+
         // S3バケットの作成
         const staticAssetsBucket = new s3.Bucket(this, 'StaticAssetsBucket', {
             versioned: true,
@@ -130,6 +159,17 @@ export class LargeScaleStack extends cdk.Stack {
             ],
         });
 
+        // S3バケットにタグを追加
+        cdk.Tags.of(staticAssetsBucket).add('Name', `${props.projectName}-large-static-assets`);
+
+        // CloudFrontログバケットの作成
+        const cfLogsBucket = new s3.Bucket(this, 'CloudFrontLogsBucket');
+        cdk.Tags.of(cfLogsBucket).add('Name', `${props.projectName}-large-cf-logs`);
+
+        // S3情報の記録
+        recorder.recordS3(staticAssetsBucket, this.stackName);
+        recorder.recordS3(cfLogsBucket, this.stackName);
+
         // CloudFrontディストリビューションの作成
         const distribution = new cloudfront.Distribution(this, 'CloudFrontDistribution', {
             defaultBehavior: {
@@ -139,9 +179,15 @@ export class LargeScaleStack extends cdk.Stack {
                 originRequestPolicy: cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
             },
             enableLogging: true,
-            logBucket: new s3.Bucket(this, 'CloudFrontLogsBucket'),
+            logBucket: cfLogsBucket,
             logFilePrefix: 'cloudfront-logs/',
         });
+
+        // CloudFrontにタグを追加
+        cdk.Tags.of(distribution).add('Name', `${props.projectName}-large-cf`);
+
+        // CloudFront情報の記録
+        recorder.recordCloudFront(distribution, this.stackName);
 
         // ECSクラスターの作成
         const cluster = new ecs.Cluster(this, 'LargeScaleCluster', {
@@ -150,7 +196,10 @@ export class LargeScaleStack extends cdk.Stack {
             enableFargateCapacityProviders: true,
         });
 
-        // APIとフロントエンド用の個別のターゲットグループとALBを作成
+        // ECSクラスターにタグを追加
+        cdk.Tags.of(cluster).add('Name', `${props.projectName}-large-cluster`);
+
+        // APIサービスの作成
         const apiService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'ApiService', {
             cluster,
             memoryLimitMiB: 4096,
@@ -159,7 +208,7 @@ export class LargeScaleStack extends cdk.Stack {
             publicLoadBalancer: true,
             assignPublicIp: false,
             taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('api-image:latest'), // 実際のAPIイメージに置き換える
+                image: ecs.ContainerImage.fromRegistry('api-image:latest'),
                 environment: {
                     DATABASE_URL: auroraCluster.clusterEndpoint.socketAddress,
                     REDIS_URL: `redis://${redisCluster.attrConfigurationEndPointAddress}:${redisCluster.attrConfigurationEndPointPort}`,
@@ -171,6 +220,11 @@ export class LargeScaleStack extends cdk.Stack {
             },
         });
 
+        // APIサービスにタグを追加
+        cdk.Tags.of(apiService.service).add('Name', `${props.projectName}-large-api-service`);
+        cdk.Tags.of(apiService.loadBalancer).add('Name', `${props.projectName}-large-api-alb`);
+
+        // フロントエンドサービスの作成
         const frontendService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'FrontendService', {
             cluster,
             memoryLimitMiB: 2048,
@@ -179,7 +233,7 @@ export class LargeScaleStack extends cdk.Stack {
             publicLoadBalancer: true,
             assignPublicIp: false,
             taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('frontend-image:latest'), // 実際のフロントエンドイメージに置き換える
+                image: ecs.ContainerImage.fromRegistry('frontend-image:latest'),
                 environment: {
                     API_URL: apiService.loadBalancer.loadBalancerDnsName,
                     CLOUDFRONT_DOMAIN: distribution.distributionDomainName,
@@ -190,6 +244,14 @@ export class LargeScaleStack extends cdk.Stack {
                 }),
             },
         });
+
+        // フロントエンドサービスにタグを追加
+        cdk.Tags.of(frontendService.service).add('Name', `${props.projectName}-large-frontend-service`);
+        cdk.Tags.of(frontendService.loadBalancer).add('Name', `${props.projectName}-large-frontend-alb`);
+
+        // ECS情報の記録
+        recorder.recordEcs(cluster, apiService, this.stackName);
+        recorder.recordEcs(cluster, frontendService, this.stackName);
 
         // Auto Scalingの設定
         const apiScaling = apiService.service.autoScaleTaskCount({
@@ -259,16 +321,31 @@ export class LargeScaleStack extends cdk.Stack {
             ],
         });
 
+        // WAFにタグを追加
+        cdk.Tags.of(wafAcl).add('Name', `${props.projectName}-large-waf`);
+
+        // WAF情報の記録
+        recorder.recordWaf(wafAcl, this.stackName);
+
         // Shield Advancedの保護
-        new shield.CfnProtection(this, 'ShieldProtection', {
+        const shieldProtection = new shield.CfnProtection(this, 'ShieldProtection', {
             name: 'LargeScaleProtection',
             resourceArn: distribution.distributionArn,
         });
+
+        // Shieldにタグを追加
+        cdk.Tags.of(shieldProtection).add('Name', `${props.projectName}-large-shield`);
+
+        // Shield情報の記録
+        recorder.recordShieldProtection(shieldProtection, this.stackName);
 
         // CI/CDパイプラインの作成
         const pipeline = new codepipeline.Pipeline(this, 'DeploymentPipeline', {
             pipelineName: 'LargeScaleDeploymentPipeline',
         });
+
+        // パイプラインにタグを追加
+        cdk.Tags.of(pipeline).add('Name', `${props.projectName}-large-pipeline`);
 
         const sourceOutput = new codepipeline.Artifact();
         const buildOutput = new codepipeline.Artifact();
@@ -287,22 +364,31 @@ export class LargeScaleStack extends cdk.Stack {
             ],
         });
 
+        const buildProject = new codebuild.PipelineProject(this, 'BuildProject');
+        cdk.Tags.of(buildProject).add('Name', `${props.projectName}-large-build`);
+
         pipeline.addStage({
             stageName: 'Build',
             actions: [
                 new codepipeline_actions.CodeBuildAction({
                     actionName: 'Build',
-                    project: new codebuild.PipelineProject(this, 'BuildProject'),
+                    project: buildProject,
                     input: sourceOutput,
                     outputs: [buildOutput],
                 }),
             ],
         });
 
+        // Pipeline情報の記録
+        recorder.recordCodePipeline(pipeline, this.stackName);
+
         // CloudWatchダッシュボードの作成
         const dashboard = new cloudwatch.Dashboard(this, 'LargeScaleDashboard', {
             dashboardName: 'LargeScaleApplicationMetrics',
         });
+
+        // ダッシュボードにタグを追加
+        cdk.Tags.of(dashboard).add('Name', `${props.projectName}-large-dashboard`);
 
         dashboard.addWidgets(
             new cloudwatch.GraphWidget({
@@ -321,16 +407,30 @@ export class LargeScaleStack extends cdk.Stack {
             })
         );
 
+        // CloudWatchダッシュボード情報の記録
+        recorder.recordCloudWatchDashboard(dashboard, this.stackName);
+
         // Systems Manager Parameter Storeの設定
-        new ssm.StringParameter(this, 'DatabaseUrl', {
+        const databaseUrlParam = new ssm.StringParameter(this, 'DatabaseUrl', {
             parameterName: '/prod/database/url',
             stringValue: auroraCluster.clusterEndpoint.socketAddress,
         });
 
-        new ssm.StringParameter(this, 'RedisUrl', {
+        const redisUrlParam = new ssm.StringParameter(this, 'RedisUrl', {
             parameterName: '/prod/redis/url',
             stringValue: `redis://${redisCluster.attrConfigurationEndPointAddress}:${redisCluster.attrConfigurationEndPointPort}`,
         });
+
+        // パラメータにタグを追加
+        cdk.Tags.of(databaseUrlParam).add('Name', `${props.projectName}-large-param-db`);
+        cdk.Tags.of(redisUrlParam).add('Name', `${props.projectName}-large-param-redis`);
+
+        // パラメータ情報の記録
+        recorder.recordParameter(databaseUrlParam, this.stackName);
+        recorder.recordParameter(redisUrlParam, this.stackName);
+
+        // リソース情報をファイルに保存
+        recorder.saveToFile();
 
         // 出力
         new cdk.CfnOutput(this, 'ApiEndpoint', {

@@ -8,10 +8,21 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as elasticloadbalancingv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { ResourceRecorder } from './utils/resource-recorder';
+
+export interface SmallScaleStackProps extends cdk.StackProps {
+    projectName: string;
+}
 
 export class SmallScaleStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: SmallScaleStackProps) {
         super(scope, id, props);
+
+        const recorder = new ResourceRecorder(props.projectName);
+
+        // スタック全体にタグを追加
+        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('Scale', 'small');
 
         // VPCの作成
         const vpc = new ec2.Vpc(this, 'SmallScaleVPC', {
@@ -31,6 +42,12 @@ export class SmallScaleStack extends cdk.Stack {
             ],
         });
 
+        // VPCにタグを追加
+        cdk.Tags.of(vpc).add('Name', `${props.projectName}-small-vpc`);
+
+        // VPC情報の記録
+        recorder.recordVpc(vpc, this.stackName);
+
         // RDSの作成（Single-AZ）
         const databaseInstance = new rds.DatabaseInstance(this, 'SmallScaleDB', {
             engine: rds.DatabaseInstanceEngine.postgres({
@@ -48,6 +65,12 @@ export class SmallScaleStack extends cdk.Stack {
             backupRetention: cdk.Duration.days(7),
         });
 
+        // RDSにタグを追加
+        cdk.Tags.of(databaseInstance).add('Name', `${props.projectName}-small-db`);
+
+        // RDS情報の記録
+        recorder.recordRds(databaseInstance, this.stackName);
+
         // S3バケットの作成（静的ファイル用）
         const staticFilesBucket = new s3.Bucket(this, 'StaticFilesBucket', {
             versioned: true,
@@ -62,11 +85,20 @@ export class SmallScaleStack extends cdk.Stack {
             ],
         });
 
+        // S3バケットにタグを追加
+        cdk.Tags.of(staticFilesBucket).add('Name', `${props.projectName}-small-static-files`);
+
+        // S3情報の記録
+        recorder.recordS3(staticFilesBucket, this.stackName);
+
         // ECSクラスターの作成
         const cluster = new ecs.Cluster(this, 'SmallScaleCluster', {
             vpc,
             containerInsights: true,
         });
+
+        // ECSクラスターにタグを追加
+        cdk.Tags.of(cluster).add('Name', `${props.projectName}-small-cluster`);
 
         // ALBとFargateサービスの作成
         const loadBalancedFargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallScaleService', {
@@ -84,6 +116,13 @@ export class SmallScaleStack extends cdk.Stack {
             },
             assignPublicIp: false,
         });
+
+        // Fargateサービスにタグを追加
+        cdk.Tags.of(loadBalancedFargateService.service).add('Name', `${props.projectName}-small-service`);
+        cdk.Tags.of(loadBalancedFargateService.loadBalancer).add('Name', `${props.projectName}-small-alb`);
+
+        // ECS情報の記録
+        recorder.recordEcs(cluster, loadBalancedFargateService, this.stackName);
 
         // Auto Scalingの設定（軽めの設定）
         const scaling = loadBalancedFargateService.service.autoScaleTaskCount({
@@ -103,6 +142,9 @@ export class SmallScaleStack extends cdk.Stack {
             ec2.Port.tcp(5432),
             'Allow access from Fargate service'
         );
+
+        // リソース情報をファイルに保存
+        recorder.saveToFile();
 
         // 出力
         new cdk.CfnOutput(this, 'LoadBalancerDNS', {

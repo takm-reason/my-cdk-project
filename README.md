@@ -1,428 +1,114 @@
-# My CDK Project
+# AWS CDK Infrastructureプロジェクト
 
-このプロジェクトはAWS CDKを使用したインフラストラクチャのコード化（IaC）プロジェクトです。小規模、中規模、大規模の各構成に対応しています。
+このプロジェクトは、AWS CDKを使用して異なる規模のインフラストラクチャをコードとして管理するためのテンプレートです。
 
-## 前提条件
+## 機能
 
-* Node.js (v18.x以降)
-* AWS CLI（設定済み）
-* AWS CDK CLI (`npm install -g aws-cdk`)
+- 3つのスケール（小規模、中規模、大規模）に対応
+- リソース情報の自動記録
+- 統一的なタグ付け
+- プロジェクトごとの分離
 
-## IAMユーザーのセットアップ
+## スケール別の構成
 
-このプロジェクトを実行するには、適切な権限を持つIAMユーザーが必要です。以下の手順で設定を行ってください。
+### 小規模構成（small）
+- VPC（2 AZ、NAT Gateway x1）
+- RDS PostgreSQL（Single-AZ）
+- S3バケット
+- ECS Fargate（Auto Scaling: 1-2台）
 
-### 1. IAMユーザーの作成
+### 中規模構成（medium）
+- VPC（3 AZ、NAT Gateway x2）
+- Aurora MySQL Serverless v2
+- ElastiCache Redis
+- S3バケット
+- CloudFront
+- WAF
+- ECS Fargate（Auto Scaling: 2-5台）
 
-1. AWSマネジメントコンソールにサインインします。
-2. IAMコンソール（https://console.aws.amazon.com/iam/）に移動します。
-3. 左側のナビゲーションペインで「ユーザー」を選択します。
-4. 「ユーザーを作成」をクリックします。
-5. ユーザー名を入力します（例：`cdk-deployer`）。
-6. アクセスキーの作成にチェックを入れ、「次へ」をクリックします。
+### 大規模構成（large）
+- VPC（3 AZ、NAT Gateway x3）
+- Aurora PostgreSQL Global Database
+- ElastiCache Redisクラスター（マルチAZ）
+- S3バケット（インテリジェント階層化）
+- CloudFront + Shield Advanced
+- WAF（カスタムルール）
+- ECS Fargate（API: 10-50台、Frontend: 10-30台）
+- CI/CDパイプライン
+- CloudWatchダッシュボード
+- Systems Manager Parameter Store
 
-### 2. 必要な権限の付与
+## 使用方法
 
-#### マネジメントコンソールの場合
-以下のインラインポリシーをユーザーに追加してください：
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "cloudformation:*",
-                "s3:*",
-                "iam:*",
-                "ec2:*",
-                "elasticloadbalancing:*",
-                "ecs:*",
-                "ecr:*",
-                "rds:*",
-                "elasticache:*",
-                "cloudfront:*",
-                "wafv2:*",
-                "waf:*",
-                "shield:*",
-                "route53:*",
-                "acm:*",
-                "ssm:*",
-                "kms:*",
-                "logs:*",
-                "cloudwatch:*",
-                "secretsmanager:*",
-                "lambda:*",
-                "sns:*",
-                "sqs:*",
-                "apigateway:*",
-                "dynamodb:*",
-                "elasticfilesystem:*",
-                "events:*",
-                "application-autoscaling:*",
-                "tag:*"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-```
-
-#### CloudShellの場合
-以下のコマンドを実行してポリシーを作成し、ユーザーにアタッチします：
+### プロジェクトのセットアップ
 
 ```bash
-# ポリシードキュメントをファイルに保存
-cat << 'EOF' > policy.json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "cloudformation:*",
-                "s3:*",
-                "iam:*",
-                "ec2:*",
-                "elasticloadbalancing:*",
-                "ecs:*",
-                "ecr:*",
-                "rds:*",
-                "elasticache:*",
-                "cloudfront:*",
-                "wafv2:*",
-                "waf:*",
-                "shield:*",
-                "route53:*",
-                "acm:*",
-                "ssm:*",
-                "kms:*",
-                "logs:*",
-                "cloudwatch:*",
-                "secretsmanager:*",
-                "lambda:*",
-                "sns:*",
-                "sqs:*",
-                "apigateway:*",
-                "dynamodb:*",
-                "elasticfilesystem:*",
-                "events:*",
-                "application-autoscaling:*",
-                "tag:*"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-EOF
-
-# IAMポリシーの作成
-aws iam create-policy --policy-name cdk-deployer-policy --policy-document file://policy.json
-
-# ポリシーをユーザーにアタッチ
-aws iam attach-user-policy --user-name cdk-deployer --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/cdk-deployer-policy
-
-# AWS管理ポリシー「PowerUserAccess」もアタッチ（オプション：より包括的な権限が必要な場合）
-aws iam attach-user-policy --user-name cdk-deployer --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
-```
-
-**注意**: 
-- このポリシーには、プロジェクトで使用する可能性のあるすべてのAWSサービスへのフルアクセス権限が含まれています。
-- 本番環境では、必要最小限の権限に制限することを推奨します。
-- より制限的な権限が必要な場合は、各アクションやリソースを個別に指定してください。
-- 大規模なプロジェクトや本番環境では、AWS管理ポリシー「PowerUserAccess」の使用も検討してください。
-
-### 3. AWS認証情報の設定
-
-作成したIAMユーザーの認証情報をローカル環境に設定します：
-
-```bash
-aws configure
-```
-
-プロンプトで以下の情報を入力してください：
-- AWS Access Key ID: [作成したIAMユーザーのアクセスキーID]
-- AWS Secret Access Key: [作成したIAMユーザーのシークレットアクセスキー]
-- Default region name: [使用するリージョン（例：ap-northeast-1）]
-- Default output format: json
-
-### 4. 認証情報の確認
-
-設定が正しく完了したことを確認するには：
-
-```bash
-aws sts get-caller-identity
-```
-
-このコマンドで、設定したIAMユーザーの情報が表示されることを確認してください。
-
-## セットアップ
-
-プロジェクトをセットアップするには以下のコマンドを実行してください：
-
-```bash
-# 依存パッケージのインストール
 npm install
-
-# TypeScriptのビルド
-npm run build
-
-# CDKアプリケーションの初期化（初回のみ）
-npm run cdk bootstrap
-
-# スタックのデプロイ（開発環境の小規模構成の場合）
-npm run cdk deploy -- --context project-name=my-app --require-approval never
 ```
 
-## プロジェクト構造
+### デプロイ
 
-```
-.
-├── bin/
-│   └── my-cdk-project.ts    # CDKアプリケーションのエントリーポイント
-├── lib/
-│   ├── small-scale-stack.ts     # 小規模構成のスタック定義
-│   ├── medium-scale-stack.ts    # 中規模構成のスタック定義
-│   └── large-scale-stack.ts     # 大規模構成のスタック定義
-├── test/
-│   └── my-cdk-project.test.ts   # テストコード
-├── cdk.json                 # CDK設定ファイル
-├── tsconfig.json           # TypeScript設定
-├── jest.config.js         # Jestテスト設定
-├── package.json          # プロジェクト依存関係
-└── README.md            # このファイル
-```
-
-## スケール構成の選択とデプロイ
-
-このプロジェクトは3つのスケール構成（小規模、中規模、大規模）と3つのステージ（開発、ステージング、本番）をサポートしています。
-パラメータの指定には以下の2つの方法があります：
-
-### 1. CDKコンテキストパラメータ（推奨）
-
-以下のコンテキストパラメータを使用してスタックを設定できます：
-
-- `scale`: デプロイするスケールサイズを指定
-  - `small`: 小規模構成
-  - `medium`: 中規模構成
-  - `large`: 大規模構成
-
-- `stage`: デプロイ環境を指定
-  - `dev`: 開発環境
-  - `staging`: ステージング環境
-  - `prod`: 本番環境
-
-- `project-name`: プロジェクト名を指定（オプション、デフォルト: 'default'）
-
-指定したパラメータは以下のAWSタグとして自動的にすべてのリソースに付与されます：
-- `stage`: 指定したステージ名
-- `project-name`: 指定したプロジェクト名
-
-これらのタグを使用することで、リソースの環境やプロジェクトの所属を簡単に識別できます。
-
-#### デプロイ例（コンテキストパラメータ）
+スケールとプロジェクト名を指定してデプロイ：
 
 ```bash
-# 開発環境に小規模構成をデプロイ（承認不要）
-npm run cdk deploy -- --context project-name=my-app --require-approval never
-
-# ステージング環境に中規模構成をデプロイ
-npm run cdk deploy -- --context scale=medium --context stage=staging --context project-name=my-app
-
-# 本番環境に大規模構成をデプロイ
-npm run cdk deploy -- --context scale=large --context stage=prod --context project-name=my-app
+cdk deploy -c scale=<small|medium|large> -c project=<project-name>
 ```
 
-#### 差分確認例（コンテキストパラメータ）
+例：
+```bash
+cdk deploy -c scale=small -c project=example-project
+```
+
+### リソース情報
+
+デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに保存されます。
+ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
+
+## タグ付け
+
+すべてのリソースには以下のタグが付与されます：
+- Project: プロジェクト名
+- Scale: スケールタイプ（small/medium/large）
+- Name: リソース固有の識別名（{プロジェクト名}-{スケール}-{リソース種別}）
+
+## 開発用コマンド
 
 ```bash
-# 本番環境の大規模構成の差分を確認
-npm run cdk diff -- --context scale=large --context stage=prod --context project-name=my-app
+# テスト実行
+npm run test
+
+# スタックの差分確認
+cdk diff -c scale=<small|medium|large> -c project=<project-name>
+
+# スタックの削除
+cdk destroy -c scale=<small|medium|large> -c project=<project-name>
 ```
 
-### 2. 環境変数（従来方式）
+## セキュリティ
 
-- `SCALE`: デプロイするスケールサイズを指定
-  - `small`: 小規模構成
-  - `medium`: 中規模構成
-  - `large`: 大規模構成
+- すべてのデータベースは隔離されたサブネットに配置
+- すべてのS3バケットでSSL強制
+- WAFによるWebアプリケーション保護
+- 大規模構成ではShield Advancedによる追加保護
 
-- `STAGE`: デプロイ環境を指定
-  - `dev`: 開発環境
-  - `staging`: ステージング環境
-  - `prod`: 本番環境
+## 監視
 
-#### デプロイ例（環境変数）
+- CloudWatchメトリクスによる自動監視
+- 大規模構成では包括的なダッシュボード
+- ECSコンテナインサイトの有効化
+- Auto Scalingメトリクスの監視
 
-```bash
-# 開発環境に小規模構成をデプロイ
-SCALE=small STAGE=dev npm run cdk deploy
+## コスト最適化
 
-# ステージング環境に中規模構成をデプロイ
-SCALE=medium STAGE=staging npm run cdk deploy
+- 小規模：最小限のリソースで運用
+- 中規模：Serverlessコンポーネントの活用
+- 大規模：インテリジェント階層化とキャパシティ最適化
 
-# 本番環境に大規模構成をデプロイ
-SCALE=large STAGE=prod npm run cdk deploy
-```
+## 注意事項
 
-
-### 差分確認例
-
-```bash
-# 本番環境の大規模構成の差分を確認
-SCALE=large STAGE=prod npm run cdk diff
-```
-
-## スケール構成の詳細
-
-### 小規模構成 (Small Scale)
-シンプルで効率的な小規模アプリケーション向けの構成です。
-
-* 定義ファイル: `lib/small-scale-stack.ts`
-* 想定ユーザー規模：月間アクティブユーザー1,000人以下
-* 概算コスト：月額 $100-200 程度
-  - ECS Fargate (1-2タスク): $30-60
-  - RDS (t4g.micro): $25
-  - ALB: $20
-  - S3: $1-5
-  - その他 (データ転送など): $20-30
-* 主な特徴：
-  - **ECS (Fargate)**
-    - 1〜2タスク
-    - 基本的に固定スケール（必要に応じて軽いAuto Scaling）
-    - Monolithicなアプリケーションアーキテクチャをサポート
-  - **ALB (Application Load Balancer)**
-    - 単一のパブリックALB
-    - ECS Fargateのターゲットグループに紐付け
-    - HTTP/HTTPSリスナー設定
-  - **RDS (Single-AZ)**
-    - インスタンスタイプ: t4g.micro / t4g.small
-    - シングルAZで運用
-    - 必要に応じてAurora Serverless v2への移行も可能
-  - **S3**
-    - 画像・静的ファイルの保存用
-    - シンプルな構成（CloudFrontなし）
-
-### 中規模構成 (Medium Scale)
-成長するアプリケーション向けの拡張性と可用性を備えた構成です。
-
-* 定義ファイル: `lib/medium-scale-stack.ts`
-* 想定ユーザー規模：月間アクティブユーザー1,000-10,000人
-* 概算コスト：月額 $500-1,000 程度
-  - ECS Fargate (2-5タスク): $100-250
-  - Aurora Serverless v2: $200-300
-  - ElastiCache: $50
-  - ALB: $20
-  - CloudFront + S3: $50-100
-  - WAF: $50
-  - その他 (データ転送など): $100-200
-* 主な特徴：
-  - **ECS (Fargate) + Auto Scaling**
-    - 2〜5タスク（負荷に応じて自動スケール）
-    - CPU/メモリ使用率に基づくAuto Scaling
-    - 複数AZにタスクを配置
-  - **ALB (Application Load Balancer)**
-    - 複数AZにタスクを分散配置
-    - 複数のターゲットグループ（APIとWebの分離）
-  - **Aurora Serverless v2**
-    - 自動スケーリング機能
-    - マルチAZ構成で高可用性を確保
-  - **ElastiCache (Redis)**
-    - セッション管理とキャッシュ用途
-    - インスタンスタイプ: cache.t4g.small〜medium
-  - **S3 + CloudFront**
-    - 静的コンテンツの配信最適化
-    - グローバルなエッジキャッシュの活用
-  - **WAF**
-    - 基本的なセキュリティ保護
-    - SQLインジェクションやDDoS対策
-
-### 大規模構成 (Large Scale)
-高可用性、高性能、グローバル展開に対応した大規模アプリケーション向けの構成です。
-
-* 定義ファイル: `lib/large-scale-stack.ts`
-* 想定ユーザー規模：月間アクティブユーザー10,000人以上
-* 概算コスト：月額 $3,000-10,000以上
-  - ECS Fargate (10-50タスク): $500-2,500
-  - Aurora (r6g.large x 3): $1,000-1,500
-  - ElastiCache Cluster: $500-1,000
-  - 複数ALB: $100
-  - CloudFront + S3: $200-500
-  - WAF + Shield Advanced: $3,000
-  - CI/CD + 監視: $100-200
-  - その他 (データ転送など): $500-1,000
-* 主な特徴：
-  - **ECS (Fargate) + 大規模Auto Scaling**
-    - 10〜50タスク（負荷に応じて自動スケール）
-    - 複数AZにまたがる配置
-    - マイクロサービスアーキテクチャをサポート
-  - **複数のALB**
-    - APIとフロントエンド用の個別ALB
-    - 高度なルーティング設定
-    - 大規模トラフィックへの対応
-  - **Aurora + Read Replica**
-    - インスタンスタイプ: r6g.large以上
-    - 読み書き分離による負荷分散
-    - グローバルデータベース対応
-  - **ElastiCache (Redis Cluster)**
-    - クラスターモードによる水平スケーリング
-    - 大規模セッション管理とキャッシュ
-    - インスタンスタイプ: cache.r6g.large以上
-  - **S3 + CloudFront + Shield**
-    - グローバルコンテンツ配信
-    - 大規模データ転送の最適化
-    - DDoS保護
-  - **統合監視とCI/CD**
-    - CloudWatch詳細モニタリング
-    - 自動デプロイパイプライン
-    - Systems Managerによる構成管理
-
-## 開発ガイド
-
-### 新しいリソースの追加
-
-1. 適切なスケール構成のスタックファイルを選択
-2. リソースを追加
-3. 必要に応じてテストを追加
-4. `npm run build`でコンパイル
-5. `npm run cdk diff`で変更内容を確認
-6. `npm run cdk deploy`でデプロイ
-
-## セキュリティのベストプラクティス
-
-1. 認証情報の管理
-   * AWSクレデンシャルを適切に管理
-   * シークレットはAWS Secrets Managerを使用
-   * 環境変数での機密情報の受け渡しは避ける
-
-2. ネットワークセキュリティ
-   * VPCのサブネット設計を適切に行う
-   * セキュリティグループの設定は必要最小限に
-   * パブリックアクセスが必要なリソースのみパブリックサブネットに配置
-
-3. その他
-   * IAMポリシーは最小権限の原則に従う
-   * 本番環境へのデプロイ前に`npm run cdk diff`で変更内容を必ず確認
-   * 重要なリソースには削除保護を設定
-
-## トラブルシューティング
-
-一般的な問題と解決方法：
-
-1. デプロイエラー
-   * AWSクレデンシャルの確認
-   * `npm run cdk bootstrap`の実行確認
-   * CloudFormationコンソールでエラー詳細確認
-
-2. TypeScriptエラー
-   * `npm install`での依存パッケージ確認
-   * `tsconfig.json`の設定確認
-   * `npm run build`でのコンパイルエラー確認
-
-3. 環境変数関連
-   * `SCALE`と`STAGE`が正しく設定されているか確認
-   * AWS認証情報が正しく設定されているか確認
+- プロジェクト名は一意である必要があります
+- 異なるスケール間での直接的な連携は想定していません
+- スケールの変更は新しいスタックとしてデプロイすることを推奨します
 
 ## ライセンス
 

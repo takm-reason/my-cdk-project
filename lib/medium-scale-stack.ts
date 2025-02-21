@@ -11,10 +11,21 @@ import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import { ResourceRecorder } from './utils/resource-recorder';
+
+export interface MediumScaleStackProps extends cdk.StackProps {
+    projectName: string;
+}
 
 export class MediumScaleStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: MediumScaleStackProps) {
         super(scope, id, props);
+
+        const recorder = new ResourceRecorder(props.projectName);
+
+        // スタック全体にタグを追加
+        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('Scale', 'medium');
 
         // VPCの作成（マルチAZ）
         const vpc = new ec2.Vpc(this, 'MediumScaleVPC', {
@@ -39,6 +50,12 @@ export class MediumScaleStack extends cdk.Stack {
             ],
         });
 
+        // VPCにタグを追加
+        cdk.Tags.of(vpc).add('Name', `${props.projectName}-medium-vpc`);
+
+        // VPC情報の記録
+        recorder.recordVpc(vpc, this.stackName);
+
         // Aurora Serverless v2の作成
         const auroraCluster = new rds.DatabaseCluster(this, 'AuroraServerlessV2', {
             engine: rds.DatabaseClusterEngine.auroraMysql({
@@ -59,6 +76,12 @@ export class MediumScaleStack extends cdk.Stack {
                 subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
             },
         });
+
+        // Auroraクラスターにタグを追加
+        cdk.Tags.of(auroraCluster).add('Name', `${props.projectName}-medium-aurora`);
+
+        // Aurora情報の記録
+        recorder.recordRds(auroraCluster, this.stackName);
 
         // ElastiCache (Redis) の作成
         const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
@@ -82,6 +105,12 @@ export class MediumScaleStack extends cdk.Stack {
             cacheSubnetGroupName: redisSubnetGroup.ref,
         });
 
+        // Redisクラスターにタグを追加
+        cdk.Tags.of(redisCluster).add('Name', `${props.projectName}-medium-redis`);
+
+        // Redis情報の記録
+        recorder.recordElastiCache(redisCluster, this.stackName);
+
         // S3バケットの作成
         const staticAssetsBucket = new s3.Bucket(this, 'StaticAssetsBucket', {
             versioned: true,
@@ -96,6 +125,12 @@ export class MediumScaleStack extends cdk.Stack {
             ],
         });
 
+        // S3バケットにタグを追加
+        cdk.Tags.of(staticAssetsBucket).add('Name', `${props.projectName}-medium-static-assets`);
+
+        // S3情報の記録
+        recorder.recordS3(staticAssetsBucket, this.stackName);
+
         // CloudFrontディストリビューションの作成
         const distribution = new cloudfront.Distribution(this, 'CloudFrontDistribution', {
             defaultBehavior: {
@@ -105,11 +140,20 @@ export class MediumScaleStack extends cdk.Stack {
             },
         });
 
+        // CloudFrontにタグを追加
+        cdk.Tags.of(distribution).add('Name', `${props.projectName}-medium-cf`);
+
+        // CloudFront情報の記録
+        recorder.recordCloudFront(distribution, this.stackName);
+
         // ECSクラスターの作成
         const cluster = new ecs.Cluster(this, 'MediumScaleCluster', {
             vpc,
             containerInsights: true,
         });
+
+        // ECSクラスターにタグを追加
+        cdk.Tags.of(cluster).add('Name', `${props.projectName}-medium-cluster`);
 
         // WAFの作成
         const wafAcl = new wafv2.CfnWebACL(this, 'WAFWebACL', {
@@ -140,6 +184,12 @@ export class MediumScaleStack extends cdk.Stack {
             ],
         });
 
+        // WAFにタグを追加
+        cdk.Tags.of(wafAcl).add('Name', `${props.projectName}-medium-waf`);
+
+        // WAF情報の記録
+        recorder.recordWaf(wafAcl, this.stackName);
+
         // ALBとFargateサービスの作成
         const loadBalancedFargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'MediumScaleService', {
             cluster,
@@ -149,7 +199,7 @@ export class MediumScaleStack extends cdk.Stack {
             publicLoadBalancer: true,
             assignPublicIp: false,
             taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('nginx:latest'), // 実際のアプリケーションイメージに置き換える
+                image: ecs.ContainerImage.fromRegistry('nginx:latest'),
                 environment: {
                     DATABASE_URL: auroraCluster.clusterEndpoint.socketAddress,
                     REDIS_URL: `redis://${redisCluster.attrRedisEndpointAddress}:${redisCluster.attrRedisEndpointPort}`,
@@ -158,6 +208,13 @@ export class MediumScaleStack extends cdk.Stack {
                 },
             },
         });
+
+        // Fargateサービスにタグを追加
+        cdk.Tags.of(loadBalancedFargateService.service).add('Name', `${props.projectName}-medium-service`);
+        cdk.Tags.of(loadBalancedFargateService.loadBalancer).add('Name', `${props.projectName}-medium-alb`);
+
+        // ECS情報の記録
+        recorder.recordEcs(cluster, loadBalancedFargateService, this.stackName);
 
         // Auto Scalingの設定
         const scaling = loadBalancedFargateService.service.autoScaleTaskCount({
@@ -186,10 +243,13 @@ export class MediumScaleStack extends cdk.Stack {
         );
 
         // WAFをALBに関連付け
-        const cfnWebACLAssociation = new wafv2.CfnWebACLAssociation(this, 'WebACLAssociation', {
+        new wafv2.CfnWebACLAssociation(this, 'WebACLAssociation', {
             resourceArn: loadBalancedFargateService.loadBalancer.loadBalancerArn,
             webAclArn: wafAcl.attrArn,
         });
+
+        // リソース情報をファイルに保存
+        recorder.saveToFile();
 
         // 出力
         new cdk.CfnOutput(this, 'LoadBalancerDNS', {
