@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
+import { IConstruct } from 'constructs';
 
 export interface ResourceInfo {
     resourceType: string;
@@ -10,15 +11,26 @@ export interface ResourceInfo {
     properties: { [key: string]: any };
 }
 
+// 必須タグの定義
+const REQUIRED_TAGS = {
+    Project: '', // constructorで設定
+    Environment: 'development', // デフォルト値
+    CreatedBy: 'cdk',
+    CreatedAt: '', // constructorで設定
+};
+
 export class ResourceRecorder {
     private readonly projectName: string;
     private readonly outputDir: string;
     private resources: ResourceInfo[] = [];
+    private readonly createdAt: string;
 
     constructor(projectName: string) {
         this.projectName = projectName;
         this.outputDir = path.join(process.cwd(), 'resource-info');
         this.ensureOutputDirectoryExists();
+        // YYYY-MM-DD形式で今日の日付を設定
+        this.createdAt = new Date().toISOString().split('T')[0];
     }
 
     private ensureOutputDirectoryExists() {
@@ -27,12 +39,27 @@ export class ResourceRecorder {
         }
     }
 
+    // 必須タグを付与するヘルパーメソッド
+    private applyRequiredTags(construct: IConstruct) {
+        const tags = {
+            ...REQUIRED_TAGS,
+            Project: this.projectName,
+            CreatedAt: this.createdAt,
+        };
+
+        Object.entries(tags).forEach(([key, value]) => {
+            cdk.Tags.of(construct).add(key, value);
+        });
+    }
+
     public recordResource(resource: ResourceInfo) {
         this.resources.push(resource);
     }
 
     public recordVpc(vpc: cdk.aws_ec2.IVpc, stackName: string) {
         const vpcResource = vpc as cdk.aws_ec2.Vpc;
+        this.applyRequiredTags(vpcResource);
+
         this.recordResource({
             resourceType: 'VPC',
             resourceId: vpc.node.id,
@@ -70,6 +97,8 @@ export class ResourceRecorder {
     }
 
     public recordRds(database: cdk.aws_rds.DatabaseInstance | cdk.aws_rds.DatabaseCluster, stackName: string) {
+        this.applyRequiredTags(database);
+
         const baseProperties = {
             stackName,
             databaseName: database.secret?.secretName
@@ -107,6 +136,8 @@ export class ResourceRecorder {
     }
 
     public recordS3(bucket: cdk.aws_s3.IBucket, stackName: string) {
+        this.applyRequiredTags(bucket);
+
         this.recordResource({
             resourceType: 'S3',
             resourceId: bucket.node.id,
@@ -125,6 +156,11 @@ export class ResourceRecorder {
         service: cdk.aws_ecs_patterns.ApplicationLoadBalancedFargateService,
         stackName: string
     ) {
+        // クラスター、サービス、ロードバランサーにタグを適用
+        this.applyRequiredTags(cluster);
+        this.applyRequiredTags(service);
+        this.applyRequiredTags(service.loadBalancer);
+
         this.recordResource({
             resourceType: 'ECS',
             resourceId: cluster.node.id,
@@ -142,6 +178,8 @@ export class ResourceRecorder {
     }
 
     public recordElastiCache(redisCluster: cdk.aws_elasticache.CfnCacheCluster | cdk.aws_elasticache.CfnReplicationGroup, stackName: string) {
+        this.applyRequiredTags(redisCluster);
+
         if (redisCluster instanceof cdk.aws_elasticache.CfnCacheCluster) {
             this.recordResource({
                 resourceType: 'ElastiCache',
@@ -175,6 +213,8 @@ export class ResourceRecorder {
     }
 
     public recordCloudFront(distribution: cdk.aws_cloudfront.Distribution, stackName: string) {
+        this.applyRequiredTags(distribution);
+
         this.recordResource({
             resourceType: 'CloudFront',
             resourceId: distribution.node.id,
@@ -188,6 +228,8 @@ export class ResourceRecorder {
     }
 
     public recordWaf(waf: cdk.aws_wafv2.CfnWebACL, stackName: string) {
+        this.applyRequiredTags(waf);
+
         this.recordResource({
             resourceType: 'WAF',
             resourceId: waf.node.id,
@@ -201,6 +243,8 @@ export class ResourceRecorder {
     }
 
     public recordShieldProtection(shield: cdk.aws_shield.CfnProtection, stackName: string) {
+        this.applyRequiredTags(shield);
+
         this.recordResource({
             resourceType: 'Shield',
             resourceId: shield.node.id,
@@ -213,6 +257,8 @@ export class ResourceRecorder {
     }
 
     public recordCodePipeline(pipeline: cdk.aws_codepipeline.Pipeline, stackName: string) {
+        this.applyRequiredTags(pipeline);
+
         this.recordResource({
             resourceType: 'CodePipeline',
             resourceId: pipeline.node.id,
@@ -225,6 +271,8 @@ export class ResourceRecorder {
     }
 
     public recordCloudWatchDashboard(dashboard: cdk.aws_cloudwatch.Dashboard, stackName: string) {
+        this.applyRequiredTags(dashboard);
+
         this.recordResource({
             resourceType: 'CloudWatchDashboard',
             resourceId: dashboard.node.id,
@@ -237,6 +285,8 @@ export class ResourceRecorder {
     }
 
     public recordParameter(parameter: cdk.aws_ssm.StringParameter, stackName: string) {
+        this.applyRequiredTags(parameter);
+
         this.recordResource({
             resourceType: 'SSM Parameter',
             resourceId: parameter.node.id,

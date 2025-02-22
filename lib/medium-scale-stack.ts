@@ -24,7 +24,7 @@ export class MediumScaleStack extends cdk.Stack {
         const recorder = new ResourceRecorder(props.projectName);
 
         // スタック全体にタグを追加
-        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('project-name', props.projectName);
         cdk.Tags.of(this).add('Scale', 'medium');
 
         // VPCの作成（マルチAZ）

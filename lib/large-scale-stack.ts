@@ -32,7 +32,7 @@ export class LargeScaleStack extends cdk.Stack {
         const recorder = new ResourceRecorder(props.projectName);
 
         // スタック全体にタグを追加
-        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('project-name', props.projectName);
         cdk.Tags.of(this).add('Scale', 'large');
 
         // VPCの作成（マルチAZ）

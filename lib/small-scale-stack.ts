@@ -9,9 +9,11 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as elasticloadbalancingv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { ResourceRecorder } from './utils/resource-recorder';
+import { TagPolicyManager } from './utils/tag-policies';
 
 export interface SmallScaleStackProps extends cdk.StackProps {
     projectName: string;
+    environment?: string;
 }
 
 export class SmallScaleStack extends cdk.Stack {
@@ -20,9 +22,27 @@ export class SmallScaleStack extends cdk.Stack {
 
         const recorder = new ResourceRecorder(props.projectName);
 
+        // タグポリシーマネージャーの初期化
+        const tagPolicyManager = new TagPolicyManager({
+            scope: this,
+            projectName: props.projectName,
+        });
+
+        // AWS Config ルールの作成
+        tagPolicyManager.createTagComplianceRule();
+
+        // Tag Policyテンプレートの生成（Organizations管理者に提供）
+        const tagPolicyTemplate = tagPolicyManager.generateTagPolicyTemplate();
+        new cdk.CfnOutput(this, 'TagPolicyTemplate', {
+            value: tagPolicyTemplate,
+            description: 'Organizations Tag Policyテンプレート',
+        });
+
         // スタック全体にタグを追加
         cdk.Tags.of(this).add('Project', props.projectName);
-        cdk.Tags.of(this).add('Scale', 'small');
+        cdk.Tags.of(this).add('Environment', props.environment || 'development');
+        cdk.Tags.of(this).add('CreatedBy', 'cdk');
+        cdk.Tags.of(this).add('CreatedAt', new Date().toISOString().split('T')[0]);
 
         // VPCの作成
         const vpc = new ec2.Vpc(this, 'SmallScaleVPC', {
@@ -41,9 +61,6 @@ export class SmallScaleStack extends cdk.Stack {
                 }
             ],
         });
-
-        // VPCにタグを追加
-        cdk.Tags.of(vpc).add('Name', `${props.projectName}-small-vpc`);
 
         // VPC情報の記録
         recorder.recordVpc(vpc, this.stackName);
@@ -65,9 +82,6 @@ export class SmallScaleStack extends cdk.Stack {
             backupRetention: cdk.Duration.days(7),
         });
 
-        // RDSにタグを追加
-        cdk.Tags.of(databaseInstance).add('Name', `${props.projectName}-small-db`);
-
         // RDS情報の記録
         recorder.recordRds(databaseInstance, this.stackName);
 
@@ -85,9 +99,6 @@ export class SmallScaleStack extends cdk.Stack {
             ],
         });
 
-        // S3バケットにタグを追加
-        cdk.Tags.of(staticFilesBucket).add('Name', `${props.projectName}-small-static-files`);
-
         // S3情報の記録
         recorder.recordS3(staticFilesBucket, this.stackName);
 
@@ -96,9 +107,6 @@ export class SmallScaleStack extends cdk.Stack {
             vpc,
             containerInsights: true,
         });
-
-        // ECSクラスターにタグを追加
-        cdk.Tags.of(cluster).add('Name', `${props.projectName}-small-cluster`);
 
         // ALBとFargateサービスの作成
         const loadBalancedFargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallScaleService', {
@@ -116,10 +124,6 @@ export class SmallScaleStack extends cdk.Stack {
             },
             assignPublicIp: false,
         });
-
-        // Fargateサービスにタグを追加
-        cdk.Tags.of(loadBalancedFargateService.service).add('Name', `${props.projectName}-small-service`);
-        cdk.Tags.of(loadBalancedFargateService.loadBalancer).add('Name', `${props.projectName}-small-alb`);
 
         // ECS情報の記録
         recorder.recordEcs(cluster, loadBalancedFargateService, this.stackName);
