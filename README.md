@@ -19,7 +19,7 @@
 
 ### 中規模構成（medium）
 - VPC（3 AZ、NAT Gateway x2）
-- Aurora MySQL Serverless v2
+- Aurora PostgreSQL Serverless v2
 - ElastiCache Redis
 - S3バケット
 - CloudFront
@@ -40,49 +40,94 @@
 
 ## 使用方法
 
-### プロジェクトのセットアップ
-
+### 初期セットアップ
 ```bash
+# 依存パッケージのインストール
 npm install
+
+# AWS CDKの初期化（アカウントごとに初回のみ必要）
+cdk bootstrap
 ```
 
-### デプロイ
+### デプロイ作業
 
-スケールとプロジェクト名を指定してデプロイ：
-
+#### 開発時の作業フロー
 ```bash
-cdk deploy -c scale=<small|medium|large> -c project=<project-name>
+# 1. スタックの変更内容確認
+cdk diff SmallScaleStack
+
+# 2. ユニットテストの実行
+npm run test
+
+# 3. デプロイの実行
+cdk deploy SmallScaleStack
 ```
 
-例：
+#### 環境別のデプロイ
 ```bash
-cdk deploy -c scale=small -c project=example-project
+# 開発環境へのデプロイ
+cdk deploy SmallScaleStack -c environment=dev
+
+# 本番環境へのデプロイ
+cdk deploy SmallScaleStack -c environment=prod
+
+# 確認なしでデプロイ（CI/CD環境用）
+cdk deploy SmallScaleStack --require-approval never
 ```
 
-### リソース情報
+### 運用管理
 
-デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに保存されます。
-ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
+#### リソース情報の確認
+```bash
+# スタックの出力値を確認
+cdk list-outputs SmallScaleStack
+
+# 作成されたリソースの一覧を確認
+cdk list-resources SmallScaleStack
+```
+
+#### スタックの削除
+```bash
+# スタックの削除（確認あり）
+cdk destroy SmallScaleStack
+
+# スタックの強制削除（確認なし）
+cdk destroy SmallScaleStack --force
+```
+
+**注意事項：**
+- S3バケットは保持ポリシーが`RETAIN`に設定されているため、手動削除が必要
+- 削除前にS3バケット内のオブジェクトを空にする必要あり
+- RDSの自動バックアップは自動的に削除される設定
+
+### トラブルシューティング
+
+#### よくある問題と解決方法
+```bash
+# 依存関係の再インストール
+npm ci
+
+# キャッシュのクリア
+cdk context --clear
+
+# CloudFormationスタックの状態確認
+aws cloudformation describe-stacks --stack-name SmallScaleStack
+```
+
+## リソース情報の保存
+
+デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
+- ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
+- 保存される情報：リソースARN、エンドポイント、設定値など
 
 ## タグ付け
 
-すべてのリソースには以下のタグが付与されます：
-- Project: プロジェクト名
-- Scale: スケールタイプ（small/medium/large）
-- Name: リソース固有の識別名（{プロジェクト名}-{スケール}-{リソース種別}）
+すべてのリソースに以下のタグを付与します：
 
-## 開発用コマンド
-
-```bash
-# テスト実行
-npm run test
-
-# スタックの差分確認
-cdk diff -c scale=<small|medium|large> -c project=<project-name>
-
-# スタックの削除
-cdk destroy -c scale=<small|medium|large> -c project=<project-name>
-```
+- Project: プロジェクト名（デプロイ時指定）  
+- Environment: `production` / `staging` / `development` のみ  
+- CreatedBy: `terraform` / `cloudformation` / `cdk` / `manual` のみ  
+- CreatedAt: 作成日（YYYY-MM-DD）  
 
 ## セキュリティ
 

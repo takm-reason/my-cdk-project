@@ -15,6 +15,7 @@ import { ResourceRecorder } from './utils/resource-recorder';
 
 export interface MediumScaleStackProps extends cdk.StackProps {
     projectName: string;
+    environment?: string;
 }
 
 export class MediumScaleStack extends cdk.Stack {
@@ -24,8 +25,10 @@ export class MediumScaleStack extends cdk.Stack {
         const recorder = new ResourceRecorder(props.projectName);
 
         // スタック全体にタグを追加
-        cdk.Tags.of(this).add('project-name', props.projectName);
-        cdk.Tags.of(this).add('Scale', 'medium');
+        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('Environment', props.environment || 'development');
+        cdk.Tags.of(this).add('CreatedBy', 'cdk');
+        cdk.Tags.of(this).add('CreatedAt', new Date().toISOString().split('T')[0]);
 
         // VPCの作成（マルチAZ）
         const vpc = new ec2.Vpc(this, 'MediumScaleVPC', {
@@ -58,8 +61,8 @@ export class MediumScaleStack extends cdk.Stack {
 
         // Aurora Serverless v2の作成
         const auroraCluster = new rds.DatabaseCluster(this, 'AuroraServerlessV2', {
-            engine: rds.DatabaseClusterEngine.auroraMysql({
-                version: rds.AuroraMysqlEngineVersion.VER_3_03_0,
+            engine: rds.DatabaseClusterEngine.auroraPostgres({
+                version: rds.AuroraPostgresEngineVersion.VER_15_2,
             }),
             instances: 2,
             instanceProps: {

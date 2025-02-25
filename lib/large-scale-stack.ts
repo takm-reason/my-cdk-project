@@ -23,6 +23,7 @@ import { ResourceRecorder } from './utils/resource-recorder';
 
 export interface LargeScaleStackProps extends cdk.StackProps {
     projectName: string;
+    environment?: string;
 }
 
 export class LargeScaleStack extends cdk.Stack {
@@ -32,8 +33,10 @@ export class LargeScaleStack extends cdk.Stack {
         const recorder = new ResourceRecorder(props.projectName);
 
         // スタック全体にタグを追加
-        cdk.Tags.of(this).add('project-name', props.projectName);
-        cdk.Tags.of(this).add('Scale', 'large');
+        cdk.Tags.of(this).add('Project', props.projectName);
+        cdk.Tags.of(this).add('Environment', props.environment || 'development');
+        cdk.Tags.of(this).add('CreatedBy', 'cdk');
+        cdk.Tags.of(this).add('CreatedAt', new Date().toISOString().split('T')[0]);
 
         // VPCの作成（マルチAZ）
         const vpc = new ec2.Vpc(this, 'LargeScaleVPC', {
