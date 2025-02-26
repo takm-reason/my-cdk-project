@@ -49,6 +49,74 @@ npm install
 cdk bootstrap
 ```
 
+### Railsアプリケーションのデプロイ手順
+
+#### 1. Dockerファイルの準備
+```Dockerfile
+FROM ruby:3.2
+RUN apt-get update -qq && apt-get install -y nodejs postgresql-client
+WORKDIR /app
+COPY Gemfile /app/Gemfile
+COPY Gemfile.lock /app/Gemfile.lock
+RUN bundle install
+COPY . /app/
+CMD ["rails", "server", "-b", "0.0.0.0"]
+```
+
+#### 2. ECRリポジトリの作成とイメージのプッシュ
+```bash
+# ECRリポジトリ作成
+aws ecr create-repository --repository-name rails-app
+
+# Dockerイメージのビルドとプッシュ
+aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password-stdin [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com
+docker build -t rails-app .
+docker tag rails-app:latest [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com/rails-app:latest
+docker push [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com/rails-app:latest
+```
+
+#### 3. ECS設定の更新
+以下のように`small-scale-stack.ts`のタスク定義を更新します：
+```typescript
+taskImageOptions: {
+    image: ecs.ContainerImage.fromEcrRepository(
+        ecr.Repository.fromRepositoryName(this, 'RailsRepo', 'rails-app'),
+        'latest'
+    ),
+    environment: {
+        DATABASE_URL: `postgresql://${databaseInstance.instanceEndpoint.hostname}:5432/app`,
+        S3_BUCKET: staticFilesBucket.bucketName,
+        RAILS_ENV: 'production',
+        RAILS_SERVE_STATIC_FILES: 'true',
+        RAILS_LOG_TO_STDOUT: 'true'
+    },
+    containerPort: 3000
+}
+```
+
+#### 4. データベースのセットアップ
+```bash
+# データベース作成とマイグレーション用のタスク実行
+aws ecs run-task \
+    --cluster SmallScaleCluster \
+    --task-definition rails-setup \
+    --network-configuration "awsvpcConfiguration={subnets=[プライベートサブネットID],securityGroups=[セキュリティグループID]}" \
+    --launch-type FARGATE \
+    --command "bundle,exec,rails,db:create,db:migrate"
+```
+
+#### 5. デプロイと確認
+```bash
+# スタックのデプロイ
+cdk deploy SmallScaleStack
+
+# デプロイ後の確認事項
+- ロードバランサーのDNS名にアクセスしてアプリケーションの動作確認
+- CloudWatchログでアプリケーションログの確認
+- RDSへの接続状態の確認
+- S3への静的ファイルアップロードの確認
+```
+
 ### デプロイ作業
 
 #### 開発時の作業フロー
