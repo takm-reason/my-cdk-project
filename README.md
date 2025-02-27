@@ -124,7 +124,46 @@ EXPOSE 80
 CMD ["./bin/rails", "server", "-p", "80", "-b", "0.0.0.0"]
 ```
 
-#### 2. ECRリポジトリの作成とイメージのプッシュ
+#### 2. 生成されるファイル構造の確認
+
+CDKデプロイ後、`resource-info/[プロジェクト名]/` ディレクトリに以下の構造で必要なファイルが生成されます：
+
+```
+[プロジェクト名]/
+├── rails/
+│   └── config.yml  # Railsアプリケーションの設定ファイル
+└── aws/
+    ├── resources.yml  # AWSリソース情報
+    └── raw-data.json  # 詳細なリソース情報（デバッグ用）
+```
+
+##### Rails設定ファイル（`rails/config.yml`）
+```yaml
+rails:
+  master_key: "# bin/rails credentials:edit で生成したmaster.keyの値を設定してください"
+database:
+  host: "your-db.xxxx.ap-northeast-1.rds.amazonaws.com"  # 自動設定
+  port: 5432  # 自動設定
+  name: "app_production"
+  username: "postgres"
+  password: "# RDSのマスターパスワードを設定してください"
+aws:
+  s3_bucket: "your-bucket-name"  # 自動設定
+  region: "ap-northeast-1"  # 自動設定
+application:
+  host: "your-alb.xxxx.elb.amazonaws.com"  # 自動設定
+```
+
+手動設定が必要な項目：
+- `rails.master_key`: Railsアプリケーションのmaster.key
+- `database.password`: RDSのマスターパスワード
+
+使用方法：
+1. `rails/config.yml` をRailsプロジェクトの `config/` ディレクトリにコピー
+2. 手動設定項目を設定
+3. Railsアプリケーションを再起動
+
+#### 3. ECRリポジトリの作成とイメージのプッシュ
 ```bash
 # ECRリポジトリ作成
 aws ecr create-repository --repository-name rails-app
