@@ -1,13 +1,27 @@
 # AWS CDK Infrastructureプロジェクト
 
-このプロジェクトは、AWS CDKを使用して異なる規模のインフラストラクチャをコードとして管理するためのテンプレートです。
+このプロジェクトは、AWS CDKを使用して異なる規模のインフラストラクチャをコードとして管理するためのテンプレートです。ビルダーパターンを採用し、インフラストラクチャの構築を容易にしています。
 
 ## 機能
 
 - 3つのスケール（小規模、中規模、大規模）に対応
+- ビルダーパターンによる再利用可能なインフラ構築
 - リソース情報の自動記録
 - 統一的なタグ付け
 - プロジェクトごとの分離
+
+## ビルダーパターン
+
+### 利用可能なビルダー
+
+- **VpcBuilder**: VPCとサブネットの構築
+- **DbBuilder**: RDS/Auroraデータベースの構築
+- **CacheBuilder**: ElastiCacheの構築
+- **EcsBuilder**: ECSクラスターとサービスの構築
+- **S3Builder**: S3バケットの構築
+- **CdnBuilder**: CloudFrontディストリビューションの構築
+- **WafBuilder**: WAFの構築
+- **SecurityGroupBuilder**: セキュリティグループの構築
 
 ## スケール別の構成
 
@@ -38,6 +52,47 @@
 - CloudWatchダッシュボード
 - Systems Manager Parameter Store
 
+## CI/CD設定
+
+### GitHub Actions設定手順
+
+#### 1. 必要なシークレット
+
+以下のシークレットをGitHub Repositoryの Settings > Secrets and variables > Actions で設定してください：
+
+```
+AWS_ROLE_ARN: arn:aws:iam::{アカウントID}:role/GitHubActionsRole
+SLACK_CHANNEL_ID: CxxxxxxxxxxxxxxxxX
+SLACK_BOT_TOKEN: xoxb-xxxxxxxxxxxxx-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx
+CODECOV_TOKEN: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+#### 2. AWS IAMロールの設定
+
+1. IAMロールの作成
+```bash
+# Trust Relationship (信頼ポリシー)の作成
+cat > trust-policy.json << EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::{アカウントID}:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringLike": {
+                    "token.actions.githubusercontent.com:sub": "repo:{組織名}/{リポジトリ名}:*"
+                }
+            }
+        }
+    ]
+}
+EOF
+```
+
 ## 使用方法
 
 ### 初期セットアップ
@@ -47,174 +102,6 @@ npm install
 
 # AWS CDKの初期化（アカウントごとに初回のみ必要）
 cdk bootstrap
-```
-
-### Railsアプリケーションのデプロイ手順
-
-#### 1. Dockerファイルの準備
-```Dockerfile
-# syntax = docker/dockerfile:1
-
-# Make sure RUBY_VERSION matches the Ruby version in .ruby-version
-ARG RUBY_VERSION=3.3.5
-FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
-
-# Rails app lives here
-WORKDIR /rails
-
-# Install base packages
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y curl libjemalloc2 libvips postgresql-client && \
-    rm -rf /var/lib/apt/lists /var/cache/apt/archives
-
-# Set production environment
-ENV RAILS_ENV="production" \
-    BUNDLE_DEPLOYMENT="1" \
-    BUNDLE_PATH="/usr/local/bundle" \
-    BUNDLE_WITHOUT="development" \
-    RAILS_SERVE_STATIC_FILES="true" \
-    RAILS_LOG_TO_STDOUT="true"
-
-# Build stage
-FROM base AS build
-
-# Install packages needed to build gems
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential git pkg-config libpq-dev && \
-    rm -rf /var/lib/apt/lists /var/cache/apt/archives
-
-# Install application gems
-COPY Gemfile Gemfile.lock ./
-RUN bundle install && \
-    rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git && \
-    bundle exec bootsnap precompile --gemfile
-
-# Copy application code
-COPY . .
-
-# Precompile bootsnap code for faster boot times
-RUN bundle exec bootsnap precompile app/ lib/
-
-# Precompiling assets for production without requiring secret RAILS_MASTER_KEY
-RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
-
-# Final stage for app image
-FROM base
-
-# Copy built artifacts: gems, application
-COPY --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
-COPY --from=build /rails /rails
-
-# Run as non-root user for security
-RUN groupadd --system --gid 1000 rails && \
-    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash && \
-    chown -R rails:rails db log storage tmp
-USER 1000:1000
-
-# ECSタスク定義のメモリ制限に合わせた最適化
-ENV RUBY_YJIT_ENABLE=1 \
-    MALLOC_ARENA_MAX=2 \
-    RAILS_MAX_THREADS=5
-
-# Entrypoint prepares the database.
-ENTRYPOINT ["/rails/bin/docker-entrypoint"]
-
-# Start the server by default, this can be overwritten at runtime
-EXPOSE 80
-CMD ["./bin/rails", "server", "-p", "80", "-b", "0.0.0.0"]
-```
-
-#### 2. 生成されるファイル構造の確認
-
-CDKデプロイ後、`resource-info/[プロジェクト名]/` ディレクトリに以下の構造で必要なファイルが生成されます：
-
-```
-[プロジェクト名]/
-├── rails/
-│   └── config.yml  # Railsアプリケーションの設定ファイル
-└── aws/
-    ├── resources.yml  # AWSリソース情報
-    └── raw-data.json  # 詳細なリソース情報（デバッグ用）
-```
-
-##### Rails設定ファイル（`rails/config.yml`）
-```yaml
-rails:
-  master_key: "# bin/rails credentials:edit で生成したmaster.keyの値を設定してください"
-database:
-  host: "your-db.xxxx.ap-northeast-1.rds.amazonaws.com"  # 自動設定
-  port: 5432  # 自動設定
-  name: "app_production"
-  username: "postgres"
-  password: "# RDSのマスターパスワードを設定してください"
-aws:
-  s3_bucket: "your-bucket-name"  # 自動設定
-  region: "ap-northeast-1"  # 自動設定
-application:
-  host: "your-alb.xxxx.elb.amazonaws.com"  # 自動設定
-```
-
-手動設定が必要な項目：
-- `rails.master_key`: Railsアプリケーションのmaster.key
-- `database.password`: RDSのマスターパスワード
-
-使用方法：
-1. `rails/config.yml` をRailsプロジェクトの `config/` ディレクトリにコピー
-2. 手動設定項目を設定
-3. Railsアプリケーションを再起動
-
-#### 3. ECRリポジトリの作成とイメージのプッシュ
-```bash
-# ECRリポジトリ作成
-aws ecr create-repository --repository-name rails-app
-
-# Dockerイメージのビルドとプッシュ
-aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password-stdin [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com
-docker build -t rails-app .
-docker tag rails-app:latest [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com/rails-app:latest
-docker push [アカウントID].dkr.ecr.ap-northeast-1.amazonaws.com/rails-app:latest
-```
-
-#### 3. ECS設定の更新
-以下のように`small-scale-stack.ts`のタスク定義を更新します：
-```typescript
-taskImageOptions: {
-    image: ecs.ContainerImage.fromEcrRepository(
-        ecr.Repository.fromRepositoryName(this, 'RailsRepo', 'rails-app'),
-        'latest'
-    ),
-    environment: {
-        DATABASE_URL: `postgresql://${databaseInstance.instanceEndpoint.hostname}:5432/app`,
-        S3_BUCKET: staticFilesBucket.bucketName,
-        RAILS_ENV: 'production',
-        RAILS_SERVE_STATIC_FILES: 'true',
-        RAILS_LOG_TO_STDOUT: 'true'
-    },
-    containerPort: 3000
-}
-```
-
-#### 4. データベースのセットアップ
-```bash
-# データベース作成とマイグレーション用のタスク実行
-aws ecs run-task \
-    --cluster SmallScaleCluster \
-    --task-definition rails-setup \
-    --network-configuration "awsvpcConfiguration={subnets=[プライベートサブネットID],securityGroups=[セキュリティグループID]}" \
-    --launch-type FARGATE \
-    --command "bundle,exec,rails,db:create,db:migrate"
-```
-
-#### 5. デプロイと確認
-```bash
-# スタックのデプロイ
-cdk deploy SmallScaleStack
-
-# デプロイ後の確認事項
-- ロードバランサーのDNS名にアクセスしてアプリケーションの動作確認
-- CloudWatchログでアプリケーションログの確認
-- RDSへの接続状態の確認
-- S3への静的ファイルアップロードの確認
 ```
 
 ### デプロイ作業
@@ -243,50 +130,36 @@ cdk deploy SmallScaleStack -c environment=prod
 cdk deploy SmallScaleStack --require-approval never
 ```
 
-### 運用管理
+## エラーハンドリング
 
-#### リソース情報の確認
-```bash
-# スタックの出力値を確認
-cdk list-outputs SmallScaleStack
+### エラーコード一覧
 
-# 作成されたリソースの一覧を確認
-cdk list-resources SmallScaleStack
+```typescript
+const ERROR_CODES = {
+    'CDK001': 'スタックの依存関係エラー',
+    'CDK002': 'リソース制限エラー',
+    'CDK003': 'パラメータ検証エラー',
+};
 ```
 
-#### スタックの削除
-```bash
-# スタックの削除（確認あり）
-cdk destroy SmallScaleStack
+### エラーハンドリング例
 
-# スタックの強制削除（確認なし）
-cdk destroy SmallScaleStack --force
+```typescript
+try {
+    await stack.deploy();
+} catch (error) {
+    if (error.code === 'CDK001') {
+        // 依存関係の修正
+        await fixDependencies();
+    } else if (error.code === 'CDK002') {
+        // リソース制限の確認
+        await checkResourceLimits();
+    } else {
+        // その他のエラー処理
+        console.error('予期せぬエラー:', error);
+    }
+}
 ```
-
-**注意事項：**
-- S3バケットは保持ポリシーが`RETAIN`に設定されているため、手動削除が必要
-- 削除前にS3バケット内のオブジェクトを空にする必要あり
-- RDSの自動バックアップは自動的に削除される設定
-
-### トラブルシューティング
-
-#### よくある問題と解決方法
-```bash
-# 依存関係の再インストール
-npm ci
-
-# キャッシュのクリア
-cdk context --clear
-
-# CloudFormationスタックの状態確認
-aws cloudformation describe-stacks --stack-name SmallScaleStack
-```
-
-## リソース情報の保存
-
-デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
-- ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
-- 保存される情報：リソースARN、エンドポイント、設定値など
 
 ## タグ付け
 

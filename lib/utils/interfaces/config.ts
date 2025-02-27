@@ -4,6 +4,19 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as rds from 'aws-cdk-lib/aws-rds';
+
+export type CacheNodeType =
+    | 'cache.t4g.micro'
+    | 'cache.t4g.small'
+    | 'cache.t4g.medium'
+    | 'cache.r6g.large'
+    | 'cache.r6g.xlarge'
+    | 'cache.r6g.2xlarge'
+    | 'cache.r6g.4xlarge'
+    | 'cache.r6g.8xlarge'
+    | 'cache.r6g.12xlarge'
+    | 'cache.r6g.16xlarge';
 
 export interface BaseConfig {
     projectName: string;
@@ -17,14 +30,93 @@ export interface VpcConfig extends BaseConfig {
     vpcName: string;
 }
 
-export interface DatabaseConfig extends BaseConfig {
+export interface DatabaseInstanceConfig extends BaseConfig {
     vpc: ec2.Vpc;
-    engine: 'aurora-postgresql' | 'postgresql';
+    engine: 'postgresql';
+    version: rds.PostgresEngineVersion;
     instanceType: ec2.InstanceType;
     multiAz: boolean;
     databaseName: string;
     port?: number;
     encrypted?: boolean;
+    storageConfig?: {
+        allocatedStorage: number;
+        maxAllocatedStorage?: number;
+        storageType?: rds.StorageType;
+        iops?: number;
+    };
+    backup?: {
+        retention: number;
+        preferredWindow?: string;
+        deletionProtection?: boolean;
+    };
+    maintenance?: {
+        preferredWindow?: string;
+        autoMinorVersionUpgrade?: boolean;
+    };
+    monitoring?: {
+        enablePerformanceInsights?: boolean;
+        enableEnhancedMonitoring?: boolean;
+        monitoringInterval?: number;
+    };
+}
+
+export interface AuroraConfig extends BaseConfig {
+    vpc: ec2.Vpc;
+    engine: 'aurora-postgresql';
+    version: rds.AuroraPostgresEngineVersion;
+    instanceType: ec2.InstanceType;
+    instances: number;
+    databaseName: string;
+    port?: number;
+    serverless?: {
+        minCapacity: number;
+        maxCapacity: number;
+        autoPause?: boolean;
+        secondsUntilAutoPause?: number;
+    };
+    backup?: {
+        retention: number;
+        preferredWindow?: string;
+        deletionProtection?: boolean;
+    };
+    maintenance?: {
+        preferredWindow?: string;
+        autoMinorVersionUpgrade?: boolean;
+    };
+    monitoring?: {
+        enablePerformanceInsights?: boolean;
+        enableEnhancedMonitoring?: boolean;
+        monitoringInterval?: number;
+    };
+    replication?: {
+        enableGlobalDatabase?: boolean;
+        regions?: string[];
+    };
+}
+
+export interface CacheConfig extends BaseConfig {
+    vpc: ec2.Vpc;
+    engine: 'redis';
+    version: string;
+    nodeType: CacheNodeType;
+    multiAz?: boolean;
+    replication?: {
+        numNodeGroups?: number;
+        replicasPerNodeGroup?: number;
+    };
+    maintenance?: {
+        preferredWindow?: string;
+        autoMinorVersionUpgrade?: boolean;
+    };
+    backup?: {
+        retention: number;
+        preferredWindow?: string;
+    };
+    parameterGroup?: {
+        family: string;
+        parameters?: { [key: string]: string };
+    };
 }
 
 export interface EcsServiceConfig extends BaseConfig {
@@ -39,6 +131,22 @@ export interface EcsServiceConfig extends BaseConfig {
         name: string;
         image: string;
         environment?: { [key: string]: string };
+    };
+    loadBalancer?: {
+        public?: boolean;
+        healthCheck?: {
+            path: string;
+            interval?: number;
+            timeout?: number;
+            healthyThreshold?: number;
+            unhealthyThreshold?: number;
+        };
+        scaling?: {
+            targetCpuUtilization?: number;
+            targetMemoryUtilization?: number;
+            scaleInCooldown?: number;
+            scaleOutCooldown?: number;
+        };
     };
 }
 

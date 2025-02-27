@@ -1,0 +1,127 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - 'releases/**'
+    tags:
+      - 'v*'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-northeast-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  determine_environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      stack: ${{ steps.set-env.outputs.stack }}
+    steps:
+      - id: set-env
+        run: |
+          if [[ ${{ github.ref }} =~ ^refs/tags/v ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "stack=LargeScaleStack" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "stack=MediumScaleStack" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "stack=SmallScaleStack" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    needs: determine_environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine_environment.outputs.environment }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Deploy to AWS
+      run: |
+        npm run cdk deploy ${{ needs.determine_environment.outputs.stack }} \
+          -c environment=${{ needs.determine_environment.outputs.environment }} \
+          --require-approval never
+
+    - name: Generate resource information
+      run: |
+        npm run build
+        node dist/scripts/generate-resource-info.js \
+          ${{ needs.determine_environment.outputs.stack }} \
+          ${{ needs.determine_environment.outputs.environment }}
+
+    - name: Archive resource information
+      uses: actions/upload-artifact@v3
+      with:
+        name: resource-info
+        path: resource-info
+        retention-days: 30
+
+    - name: Notify Slack on Success
+      if: success()
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+        slack-message: |
+          :white_check_mark: Successfully deployed ${{ needs.determine_environment.outputs.stack }} to ${{ needs.determine_environment.outputs.environment }}
+          Environment: ${{ needs.determine_environment.outputs.environment }}
+          Stack: ${{ needs.determine_environment.outputs.stack }}
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.workflow }}
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+    - name: Notify Slack on Failure
+      if: failure()
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+        slack-message: |
+          :x: Failed to deploy ${{ needs.determine_environment.outputs.stack }} to ${{ needs.determine_environment.outputs.environment }}
+          Environment: ${{ needs.determine_environment.outputs.environment }}
+          Stack: ${{ needs.determine_environment.outputs.stack }}
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.workflow }}
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+  cleanup:
+    needs: [determine_environment, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup
+        run: |
+          echo "Cleaning up resources..."
+          # 必要に応じてクリーンアップ処理を追加
+
+      - name: Update deployment status
+        if: needs.deploy.result == 'success'
+        run: |
+          echo "Deployment completed successfully"
+          # デプロイステータスの更新処理を追加

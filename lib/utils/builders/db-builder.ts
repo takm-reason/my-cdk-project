@@ -1,95 +1,148 @@
+import * as cdk from 'aws-cdk-lib';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as cdk from 'aws-cdk-lib';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import { Construct } from 'constructs';
 import { BaseResourceBuilder } from '../core/stack-builder';
-import { DatabaseConfig } from '../interfaces/config';
+import { DatabaseInstanceConfig, AuroraConfig } from '../interfaces/config';
 import { ConfigValidator } from '../helpers/validators';
 
-export class DatabaseBuilder extends BaseResourceBuilder<rds.DatabaseInstance | rds.DatabaseCluster, DatabaseConfig> {
+export class DbBuilder extends BaseResourceBuilder<rds.DatabaseInstance | rds.DatabaseCluster, DatabaseInstanceConfig | AuroraConfig> {
     validate(): boolean {
         return ConfigValidator.validateDatabaseConfig(this.config);
     }
 
     build(): rds.DatabaseInstance | rds.DatabaseCluster {
-        switch (this.config.engine) {
-            case 'postgresql':
-                return this.buildPostgres();
-            case 'aurora-postgresql':
-                return this.buildAuroraPostgres();
-            default:
-                throw new Error(`Unsupported database engine: ${this.config.engine}`);
+        if (this.config.engine === 'postgresql') {
+            return this.createPostgresInstance(this.config as DatabaseInstanceConfig);
+        } else {
+            return this.createAuroraCluster(this.config as AuroraConfig);
         }
     }
 
-    private buildPostgres(): rds.DatabaseInstance {
-        const securityGroup = new ec2.SecurityGroup(this.scope, this.generateName('db-sg'), {
-            vpc: this.config.vpc,
-            description: 'Security group for PostgreSQL database',
-            allowAllOutbound: true
-        });
-
+    private createPostgresInstance(config: DatabaseInstanceConfig): rds.DatabaseInstance {
         const instance = new rds.DatabaseInstance(this.scope, this.generateName('db'), {
-            vpc: this.config.vpc,
-            vpcSubnets: {
-                subnetType: ec2.SubnetType.PRIVATE_ISOLATED
-            },
             engine: rds.DatabaseInstanceEngine.postgres({
-                version: rds.PostgresEngineVersion.VER_15
+                version: config.version,
             }),
-            instanceType: this.config.instanceType,
-            multiAz: this.config.multiAz,
-            databaseName: this.config.databaseName,
-            port: this.config.port || 5432,
-            securityGroups: [securityGroup],
-            storageEncrypted: this.config.encrypted !== false,
-            removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
-            deletionProtection: true,
-            backupRetention: cdk.Duration.days(7),
-            monitoringInterval: cdk.Duration.seconds(60)
+            instanceType: config.instanceType,
+            vpc: config.vpc,
+            vpcSubnets: {
+                subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            },
+            multiAz: config.multiAz,
+            databaseName: config.databaseName,
+            port: config.port || 5432,
+            storageEncrypted: config.encrypted ?? true,
+            allocatedStorage: config.storageConfig?.allocatedStorage || 20,
+            maxAllocatedStorage: config.storageConfig?.maxAllocatedStorage,
+            storageType: config.storageConfig?.storageType || rds.StorageType.GP3,
+            iops: config.storageConfig?.iops,
+            backupRetention: config.backup ? cdk.Duration.days(config.backup.retention) : cdk.Duration.days(7),
+            preferredBackupWindow: config.backup?.preferredWindow,
+            deletionProtection: config.backup?.deletionProtection,
+            preferredMaintenanceWindow: config.maintenance?.preferredWindow,
+            autoMinorVersionUpgrade: config.maintenance?.autoMinorVersionUpgrade ?? true,
+            enablePerformanceInsights: config.monitoring?.enablePerformanceInsights,
+            monitoringInterval: config.monitoring?.enableEnhancedMonitoring
+                ? cdk.Duration.seconds(config.monitoring.monitoringInterval || 60)
+                : cdk.Duration.seconds(0),
+            cloudwatchLogsExports: ['postgresql', 'upgrade'],
+            cloudwatchLogsRetention: logs.RetentionDays.THREE_MONTHS,
         });
 
         this.addTags(instance);
-        this.addTags(securityGroup);
-
         return instance;
     }
 
-    private buildAuroraPostgres(): rds.DatabaseCluster {
-        const securityGroup = new ec2.SecurityGroup(this.scope, this.generateName('aurora-sg'), {
-            vpc: this.config.vpc,
-            description: 'Security group for Aurora PostgreSQL cluster',
-            allowAllOutbound: true
+    private createAuroraCluster(config: AuroraConfig): rds.DatabaseCluster {
+        const engine = rds.DatabaseClusterEngine.auroraPostgres({
+            version: config.version,
         });
 
-        const cluster = new rds.DatabaseCluster(this.scope, this.generateName('aurora'), {
-            engine: rds.DatabaseClusterEngine.auroraPostgres({
-                version: rds.AuroraPostgresEngineVersion.VER_15_2
-            }),
-            instanceProps: {
-                vpc: this.config.vpc,
-                vpcSubnets: {
-                    subnetType: ec2.SubnetType.PRIVATE_ISOLATED
-                },
-                instanceType: this.config.instanceType,
-                securityGroups: [securityGroup]
-            },
-            instances: this.config.multiAz ? 2 : 1,
-            port: this.config.port || 5432,
-            defaultDatabaseName: this.config.databaseName,
-            storageEncrypted: this.config.encrypted !== false,
-            removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
-            deletionProtection: true,
+        // クラスターの設定を構築
+        const baseProps = {
+            engine,
+            instances: config.instances,
             backup: {
-                retention: cdk.Duration.days(7),
-                preferredWindow: '16:00-16:30'
+                retention: config.backup ? cdk.Duration.days(config.backup.retention) : cdk.Duration.days(7),
+                preferredWindow: config.backup?.preferredWindow,
             },
+            preferredMaintenanceWindow: config.maintenance?.preferredWindow,
+            cloudwatchLogsRetention: logs.RetentionDays.THREE_MONTHS,
             cloudwatchLogsExports: ['postgresql'],
-            monitoringInterval: cdk.Duration.seconds(60)
-        });
+            storageEncrypted: true,
+            deletionProtection: config.backup?.deletionProtection,
+            monitoringInterval: config.monitoring?.enableEnhancedMonitoring
+                ? cdk.Duration.seconds(config.monitoring.monitoringInterval || 60)
+                : cdk.Duration.seconds(0),
+            port: config.port || 5432,
+            vpc: config.vpc,
+            vpcSubnets: {
+                subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+            },
+        };
+
+        // Serverless V2の場合とそれ以外で異なる設定を適用
+        const clusterProps: rds.DatabaseClusterProps = config.serverless
+            ? {
+                ...baseProps,
+                serverlessV2MinCapacity: config.serverless.minCapacity,
+                serverlessV2MaxCapacity: config.serverless.maxCapacity,
+            }
+            : {
+                ...baseProps,
+                instanceProps: {
+                    instanceType: config.instanceType,
+                    vpc: config.vpc,
+                    vpcSubnets: {
+                        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+                    },
+                },
+            };
+
+        const cluster = new rds.DatabaseCluster(this.scope, this.generateName('aurora'), clusterProps);
+
+        // グローバルデータベースの設定
+        if (config.replication?.enableGlobalDatabase && config.replication.regions && cluster.clusterIdentifier) {
+            const globalId = `${config.projectName}-global`;
+            const cfnCluster = cluster.node.defaultChild as rds.CfnDBCluster;
+
+            // プライマリクラスターをグローバルデータベースとして設定
+            const globalCluster = new rds.CfnGlobalCluster(this.scope, this.generateName('global'), {
+                globalClusterIdentifier: globalId,
+                sourceDbClusterIdentifier: cluster.clusterIdentifier,
+                engine: 'aurora-postgresql',
+                engineVersion: cfnCluster.engineVersion || config.version.toString(),
+                deletionProtection: config.backup?.deletionProtection,
+            });
+
+            // セカンダリリージョン情報をタグとして保存
+            config.replication.regions.forEach((region, index) => {
+                cdk.Tags.of(cluster).add(`SecondaryRegion${index}`, region);
+            });
+
+            cdk.Tags.of(cluster).add('GlobalClusterId', globalId);
+        }
 
         this.addTags(cluster);
-        this.addTags(securityGroup);
-
         return cluster;
+    }
+
+    createPostgresDatabase(props: DatabaseInstanceConfig): rds.DatabaseInstance {
+        return this.createPostgresInstance(props);
+    }
+
+    createAuroraPostgresDatabase(props: AuroraConfig): rds.DatabaseCluster {
+        return this.createAuroraCluster(props);
+    }
+
+    protected addTags(resource: cdk.IResource, additionalTags?: { [key: string]: string }): void {
+        super.addTags(resource);
+        if (additionalTags) {
+            Object.entries(additionalTags).forEach(([key, value]) => {
+                cdk.Tags.of(resource).add(key, value);
+            });
+        }
     }
 }
