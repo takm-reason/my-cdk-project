@@ -1,0 +1,13 @@
+rails:
+  master_key: "# bin/rails credentials:edit で生成したmaster.keyの値を設定してください"
+database:
+  host: ${Token[TOKEN.5317]}
+  port: -1.8881545897099017e+289
+  name: app_production
+  username: postgres
+  password: "# RDSのマスターパスワードを設定してください"
+aws:
+  s3_bucket: ${Token[TOKEN.5343]}
+  region: ap-northeast-1
+application:
+  host: ${Token[TOKEN.5469]}

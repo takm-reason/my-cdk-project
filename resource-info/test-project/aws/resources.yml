@@ -1,0 +1,55 @@
+project_info:
+  name: test-project
+  environment: production
+  created_at: 2025-02-28T07:15:14.482Z
+  region: ap-northeast-1
+vpc:
+  stackName: TestStack
+  vpcId: ${Token[TOKEN.5075]}
+  vpcCidr: ${Token[TOKEN.5065]}
+  availabilityZones:
+    - ${Token[TOKEN.5072]}
+    - ${Token[TOKEN.5074]}
+  publicSubnets:
+    - id: ${Token[TOKEN.5086]}
+      availabilityZone: ${Token[TOKEN.5072]}
+      cidr: 10.0.0.0/18
+    - id: ${Token[TOKEN.5104]}
+      availabilityZone: ${Token[TOKEN.5074]}
+      cidr: 10.0.64.0/18
+  privateSubnets:
+    - id: ${Token[TOKEN.5122]}
+      availabilityZone: ${Token[TOKEN.5072]}
+      cidr: 10.0.128.0/18
+    - id: ${Token[TOKEN.5140]}
+      availabilityZone: ${Token[TOKEN.5074]}
+      cidr: 10.0.192.0/18
+rds:
+  stackName: TestStack
+  databaseName: ${Token[Fn::Join.5306]}
+  instanceIdentifier: ${Token[TOKEN.5322]}
+  engineType: postgres
+  engineVersion: "15"
+  endpointAddress: ${Token[TOKEN.5317]}
+  port: -1.8881545897099017e+289
+s3:
+  stackName: TestStack
+  bucketName: ${Token[TOKEN.5343]}
+  bucketArn: ${Token[TOKEN.5344]}
+  bucketDomainName: ${Token[TOKEN.5338]}
+  bucketWebsiteUrl: ${Token[TOKEN.5341]}
+ecs:
+  stackName: TestStack
+  clusterName: ${Token[TOKEN.5464]}
+  clusterArn: ${Token[TOKEN.5462]}
+  serviceArn: ${Token[TOKEN.5544]}
+  loadBalancerDns: ${Token[TOKEN.5469]}
+  taskDefinitionArn: ${Token[TOKEN.5516]}
+  containerName: web
+  cpu: 512
+  ecr_repository: test-project-rails-app
+load_balancer:
+  dns_name: ${Token[TOKEN.5469]}
+security_groups: []
+cloudwatch:
+  log_group: /aws/ecs/test-project

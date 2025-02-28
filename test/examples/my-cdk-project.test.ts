@@ -4,7 +4,10 @@ import { SmallScaleStack } from '../lib/small-scale-stack';
 
 describe('SmallScaleStack', () => {
     const app = new cdk.App();
-    const stack = new SmallScaleStack(app, 'TestSmallScaleStack');
+    const stack = new SmallScaleStack(app, 'TestSmallScaleStack', {
+        projectName: 'test20250228',
+        environment: 'development',
+    });
     const template = Template.fromStack(stack);
 
     // VPCのテスト
@@ -38,28 +41,28 @@ describe('SmallScaleStack', () => {
     test('S3 bucket should be created with correct configuration', () => {
         template.hasResourceProperties('AWS::S3::Bucket', {
             VersioningConfiguration: {
-                Status: 'Enabled'
+                Status: 'Enabled',
             },
             BucketEncryption: {
                 ServerSideEncryptionConfiguration: [
                     {
                         ServerSideEncryptionByDefault: {
-                            SSEAlgorithm: 'AES256'
-                        }
-                    }
-                ]
+                            SSEAlgorithm: 'AES256',
+                        },
+                    },
+                ],
             },
             LifecycleConfiguration: {
                 Rules: [
                     Match.objectLike({
                         ExpirationInDays: 365,
                         NoncurrentVersionExpiration: {
-                            NoncurrentDays: 30
+                            NoncurrentDays: 30,
                         },
-                        Status: 'Enabled'
-                    })
-                ]
-            }
+                        Status: 'Enabled',
+                    }),
+                ],
+            },
         });
     });
 
@@ -74,9 +77,9 @@ describe('SmallScaleStack', () => {
             DesiredCount: 1,
             NetworkConfiguration: {
                 AwsvpcConfiguration: {
-                    AssignPublicIp: 'DISABLED'
-                }
-            }
+                    AssignPublicIp: 'DISABLED',
+                },
+            },
         });
 
         // タスク定義
@@ -84,7 +87,7 @@ describe('SmallScaleStack', () => {
             Cpu: '512',
             Memory: '1024',
             NetworkMode: 'awsvpc',
-            RequiresCompatibilities: ['FARGATE']
+            RequiresCompatibilities: ['FARGATE'],
         });
     });
 
@@ -97,9 +100,9 @@ describe('SmallScaleStack', () => {
                 ScaleInCooldown: 300,
                 ScaleOutCooldown: 300,
                 PredefinedMetricSpecification: {
-                    PredefinedMetricType: 'ECSServiceAverageCPUUtilization'
-                }
-            }
+                    PredefinedMetricType: 'ECSServiceAverageCPUUtilization',
+                },
+            },
         });
 
         template.hasResourceProperties('AWS::ApplicationAutoScaling::ScalableTarget', {
@@ -111,16 +114,19 @@ describe('SmallScaleStack', () => {
     // セキュリティグループのテスト
     test('Security Groups should be configured correctly', () => {
         // RDSセキュリティグループの存在確認
-        template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', Match.objectLike({
-            FromPort: 5432,
-            IpProtocol: 'tcp',
-            ToPort: 5432,
-        }));
+        template.hasResourceProperties(
+            'AWS::EC2::SecurityGroupIngress',
+            Match.objectLike({
+                FromPort: 5432,
+                IpProtocol: 'tcp',
+                ToPort: 5432,
+            }),
+        );
     });
 
     // 出力のテスト
     test('Stack outputs should be defined', () => {
-        template.hasOutput('LoadBalancerDNS', {});
-        template.hasOutput('S3BucketName', {});
+        template.hasOutput('LoadBalancerDNS', {})
+        template.hasOutput('S3BucketName', {})
     });
 });
