@@ -5,6 +5,11 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as elasticache from 'aws-cdk-lib/aws-elasticache';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
+import * as shield from 'aws-cdk-lib/aws-shield';
 import { Duration } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
@@ -208,6 +213,197 @@ export class InfraLargeStack extends cdk.Stack {
             apiService,
             ec2.Port.tcp(3306),
             'Allow from API Fargate service'
+        );
+
+        // ElastiCache (Redis Cluster)の設定
+        const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
+            subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }).subnetIds,
+            description: 'Subnet group for Redis cluster',
+        });
+
+        const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
+            vpc,
+            description: 'Security group for Redis cluster',
+            allowAllOutbound: true,
+        });
+
+        const redisCluster = new elasticache.CfnReplicationGroup(this, 'LargeRedisCluster', {
+            replicationGroupDescription: 'Large environment Redis cluster',
+            engine: 'redis',
+            cacheNodeType: 'cache.r6g.large',
+            numNodeGroups: 3,
+            replicasPerNodeGroup: 2,
+            automaticFailoverEnabled: true,
+            multiAzEnabled: true,
+            cacheSubnetGroupName: redisSubnetGroup.ref,
+            securityGroupIds: [redisSecurityGroup.securityGroupId],
+            engineVersion: '7.0',
+            port: 6379,
+            preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
+            autoMinorVersionUpgrade: true,
+            atRestEncryptionEnabled: true,
+            transitEncryptionEnabled: true,
+        });
+
+        // WAF（高度な設定）
+        const wafAcl = new wafv2.CfnWebACL(this, 'LargeWAF', {
+            defaultAction: { allow: {} },
+            scope: 'CLOUDFRONT',
+            visibilityConfig: {
+                cloudWatchMetricsEnabled: true,
+                metricName: 'LargeWAFMetrics',
+                sampledRequestsEnabled: true,
+            },
+            rules: [
+                {
+                    name: 'RateLimit',
+                    priority: 1,
+                    statement: {
+                        rateBasedStatement: {
+                            limit: 3000,
+                            aggregateKeyType: 'IP',
+                        },
+                    },
+                    action: { block: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'RateLimitRule',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+                {
+                    name: 'AWSManagedRulesCommonRuleSet',
+                    priority: 2,
+                    statement: {
+                        managedRuleGroupStatement: {
+                            vendorName: 'AWS',
+                            name: 'AWSManagedRulesCommonRuleSet',
+                        },
+                    },
+                    overrideAction: { none: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'AWSManagedRulesCommonRuleSetMetric',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+                {
+                    name: 'AWSManagedRulesKnownBadInputsRuleSet',
+                    priority: 3,
+                    statement: {
+                        managedRuleGroupStatement: {
+                            vendorName: 'AWS',
+                            name: 'AWSManagedRulesKnownBadInputsRuleSet',
+                        },
+                    },
+                    overrideAction: { none: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'KnownBadInputsRuleSetMetric',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+                {
+                    name: 'AWSManagedRulesSQLiRuleSet',
+                    priority: 4,
+                    statement: {
+                        managedRuleGroupStatement: {
+                            vendorName: 'AWS',
+                            name: 'AWSManagedRulesSQLiRuleSet',
+                        },
+                    },
+                    overrideAction: { none: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'SQLiRuleSetMetric',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+            ],
+        });
+
+        // AWS Shield Advancedの有効化
+        const shieldProtection = new shield.CfnProtection(this, 'ShieldProtection', {
+            name: 'LargeEnvironmentProtection',
+            resourceArn: alb.loadBalancerArn,
+        });
+
+        // CloudFrontディストリビューションの設定（高度な設定）
+        const distribution = new cloudfront.Distribution(this, 'LargeDistribution', {
+            defaultBehavior: {
+                origin: new origins.LoadBalancerV2Origin(alb, {
+                    protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+                    httpsPort: 443,
+                }),
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+                allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+                compress: true,
+            },
+            additionalBehaviors: {
+                '/api/*': {
+                    origin: new origins.LoadBalancerV2Origin(alb, {
+                        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+                        httpsPort: 8443,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+                    originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+                    allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+                },
+            },
+            priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+            webAclId: wafAcl.attrArn,
+            enableLogging: true,
+            errorResponses: [
+                {
+                    httpStatus: 403,
+                    responsePagePath: '/error/403.html',
+                    responseHttpStatus: 403,
+                    ttl: Duration.minutes(30),
+                },
+                {
+                    httpStatus: 404,
+                    responsePagePath: '/error/404.html',
+                    responseHttpStatus: 404,
+                    ttl: Duration.minutes(30),
+                },
+            ],
+        });
+
+        // RedisへのアクセスをFargateサービスに許可
+        redisSecurityGroup.addIngressRule(
+            mainAppService.connections.securityGroups[0],
+            ec2.Port.tcp(6379),
+            'Allow from main Fargate service'
+        );
+        redisSecurityGroup.addIngressRule(
+            apiService.connections.securityGroups[0],
+            ec2.Port.tcp(6379),
+            'Allow from API Fargate service'
+        );
+
+        // 環境変数にRedisエンドポイントを追加
+        const mainAppTaskDef = mainAppService.taskDefinition;
+        const apiTaskDef = apiService.taskDefinition;
+
+        mainAppTaskDef.defaultContainer?.addEnvironment(
+            'REDIS_ENDPOINT',
+            redisCluster.attrConfigurationEndPointAddress
+        );
+        mainAppTaskDef.defaultContainer?.addEnvironment(
+            'REDIS_PORT',
+            redisCluster.attrConfigurationEndPointPort
+        );
+
+        apiTaskDef.defaultContainer?.addEnvironment(
+            'REDIS_ENDPOINT',
+            redisCluster.attrConfigurationEndPointAddress
+        );
+        apiTaskDef.defaultContainer?.addEnvironment(
+            'REDIS_PORT',
+            redisCluster.attrConfigurationEndPointPort
         );
     }
 }
