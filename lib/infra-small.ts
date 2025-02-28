@@ -1,6 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import { Construct } from 'constructs';
 
 export class InfraSmallStack extends cdk.Stack {
@@ -25,7 +27,7 @@ export class InfraSmallStack extends cdk.Stack {
         });
 
         // Small環境用のRDSインスタンス
-        new rds.DatabaseInstance(this, 'SmallDatabase', {
+        const database = new rds.DatabaseInstance(this, 'SmallDatabase', {
             engine: rds.DatabaseInstanceEngine.mysql({
                 version: rds.MysqlEngineVersion.VER_8_0
             }),
@@ -39,16 +41,36 @@ export class InfraSmallStack extends cdk.Stack {
             backupRetention: cdk.Duration.days(7),
         });
 
-        // Small環境用のEC2インスタンス
-        new ec2.Instance(this, 'SmallAppServer', {
+        // ECS Fargateクラスター
+        const cluster = new ecs.Cluster(this, 'SmallCluster', {
             vpc,
-            vpcSubnets: {
-                subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-            },
-            instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
-            machineImage: new ec2.AmazonLinuxImage({
-                generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
-            }),
+            enableFargateCapacityProviders: true,
         });
+
+        // ALBとECS Fargateサービスの統合
+        const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallService', {
+            cluster,
+            cpu: 256,
+            memoryLimitMiB: 512,
+            desiredCount: 1,
+            taskImageOptions: {
+                image: ecs.ContainerImage.fromRegistry('nginx:latest'), // デモ用のイメージ
+                containerPort: 80,
+                environment: {
+                    // データベース接続情報など
+                    DATABASE_HOST: database.instanceEndpoint.hostname,
+                    DATABASE_PORT: database.instanceEndpoint.port.toString(),
+                    DATABASE_NAME: 'appdb',
+                },
+            },
+            publicLoadBalancer: true,
+        });
+
+        // RDSへのアクセスを許可
+        database.connections.allowFrom(
+            fargateService.service,
+            ec2.Port.tcp(3306),
+            'Allow from Fargate service'
+        );
     }
 }
