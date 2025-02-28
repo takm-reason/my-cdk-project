@@ -18,7 +18,14 @@ const stackProps: cdk.StackProps = {
         account: process.env.CDK_DEFAULT_ACCOUNT,
         region: process.env.CDK_DEFAULT_REGION
     },
-    description: `Infrastructure stack for ${projectName} (${infraSize})`
+    description: `Infrastructure stack for ${projectName} (${infraSize})`,
+    tags: {
+        ProjectName: projectName,
+        TemplateName: 'AWS-TypeScript-CDK-Template',
+        Environment: infraSize,
+        CreatedBy: 'CDK',
+        CreatedAt: new Date().toISOString()
+    }
 };
 
 // infraSizeに応じて適切なスタックを作成

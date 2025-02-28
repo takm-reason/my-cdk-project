@@ -8,13 +8,59 @@ import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
-import { Duration } from 'aws-cdk-lib';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-
 export class InfraMediumStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
+        // プロジェクト名と環境名を取得
+        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
+        const environment = 'medium';
+
+        // ランダムなサフィックスを生成（8文字）
+        const suffix = Math.random().toString(36).substring(2, 10);
+
+        // S3バケットの作成
+        const bucket = new s3.Bucket(this, 'StorageBucket', {
+            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            versioned: true,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            removalPolicy: RemovalPolicy.RETAIN,
+            lifecycleRules: [
+                {
+                    expiration: cdk.Duration.days(365 * 2), // 2年
+                    transitions: [
+                        {
+                            storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+                            transitionAfter: cdk.Duration.days(30),
+                        },
+                        {
+                            storageClass: s3.StorageClass.INTELLIGENT_TIERING,
+                            transitionAfter: cdk.Duration.days(60),
+                        },
+                        {
+                            storageClass: s3.StorageClass.GLACIER,
+                            transitionAfter: cdk.Duration.days(180),
+                        }
+                    ]
+                }
+            ],
+            metrics: [
+                {
+                    id: 'EntireBucket',
+                },
+                {
+                    id: 'FilesOnly',
+                    prefix: 'files/',
+                }
+            ],
+        });
+
+        // Medium環境用のVPC設定
         // Medium環境用のVPC設定
         const vpc = new ec2.Vpc(this, 'MediumVPC', {
             maxAzs: 2,
@@ -196,6 +242,18 @@ export class InfraMediumStack extends cdk.Stack {
             webAclId: wafAcl.attrArn,
             enableLogging: true,
         });
+
+        // CloudFrontディストリビューションからのS3バケットへのアクセスを許可
+        bucket.addToResourcePolicy(new iam.PolicyStatement({
+            actions: ['s3:GetObject'],
+            resources: [bucket.arnForObjects('*')],
+            principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+            conditions: {
+                'StringEquals': {
+                    'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`
+                }
+            }
+        }));
 
         // RedisへのアクセスをFargateサービスに許可
         redisSecurityGroup.addIngressRule(

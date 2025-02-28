@@ -16,12 +16,70 @@ import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as codecommit from 'aws-cdk-lib/aws-codecommit';
-import { Duration } from 'aws-cdk-lib';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export class InfraLargeStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
+
+        // プロジェクト名と環境名を取得
+        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
+        const environment = 'large';
+
+        // ランダムなサフィックスを生成（8文字）
+        const suffix = Math.random().toString(36).substring(2, 10);
+
+        // S3バケットの作成
+        const bucket = new s3.Bucket(this, 'StorageBucket', {
+            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            versioned: true,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            removalPolicy: RemovalPolicy.RETAIN,
+            lifecycleRules: [
+                {
+                    expiration: cdk.Duration.days(365 * 3), // 3年
+                    transitions: [
+                        {
+                            storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+                            transitionAfter: cdk.Duration.days(30),
+                        },
+                        {
+                            storageClass: s3.StorageClass.INTELLIGENT_TIERING,
+                            transitionAfter: cdk.Duration.days(60),
+                        },
+                        {
+                            storageClass: s3.StorageClass.GLACIER,
+                            transitionAfter: cdk.Duration.days(90),
+                        },
+                        {
+                            storageClass: s3.StorageClass.DEEP_ARCHIVE,
+                            transitionAfter: cdk.Duration.days(180),
+                        }
+                    ]
+                }
+            ],
+            metrics: [
+                {
+                    id: 'EntireBucket',
+                },
+                {
+                    id: 'FilesOnly',
+                    prefix: 'files/',
+                }
+            ],
+            serverAccessLogsPrefix: 'access-logs/',
+            intelligentTieringConfigurations: [
+                {
+                    name: 'archive-old-objects',
+                    archiveAccessTierTime: cdk.Duration.days(90),
+                    deepArchiveAccessTierTime: cdk.Duration.days(180),
+                }
+            ],
+        });
 
         // Large環境用のVPC設定
         const vpc = new ec2.Vpc(this, 'LargeVPC', {
@@ -377,6 +435,18 @@ export class InfraLargeStack extends cdk.Stack {
                 },
             ],
         });
+
+        // CloudFrontディストリビューションからのS3バケットへのアクセスを許可
+        bucket.addToResourcePolicy(new iam.PolicyStatement({
+            actions: ['s3:GetObject'],
+            resources: [bucket.arnForObjects('*')],
+            principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+            conditions: {
+                'StringEquals': {
+                    'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`
+                }
+            }
+        }));
 
         // RedisへのアクセスをFargateサービスに許可
         redisSecurityGroup.addIngressRule(

@@ -3,11 +3,44 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import { RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export class InfraSmallStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
+
+        // プロジェクト名と環境名を取得
+        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
+        const environment = 'small';
+
+        // ランダムなサフィックスを生成（8文字）
+        const suffix = Math.random().toString(36).substring(2, 10);
+
+        // S3バケットの作成
+        const bucket = new s3.Bucket(this, 'StorageBucket', {
+            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            versioned: true,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            removalPolicy: RemovalPolicy.RETAIN,
+            lifecycleRules: [
+                {
+                    expiration: cdk.Duration.days(365),
+                    transitions: [
+                        {
+                            storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+                            transitionAfter: cdk.Duration.days(30),
+                        },
+                        {
+                            storageClass: s3.StorageClass.GLACIER,
+                            transitionAfter: cdk.Duration.days(90),
+                        }
+                    ]
+                }
+            ]
+        });
 
         // Small環境用のVPC設定
         const vpc = new ec2.Vpc(this, 'SmallVPC', {
