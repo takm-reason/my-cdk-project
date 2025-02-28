@@ -15,8 +15,7 @@
 │   └── my-cdk-project-stack.ts    # メインのCDKスタック定義
 ├── package.json
 ├── tsconfig.json
-├── cdk.json
-└── run-cdk.js    # CDK CLI実行スクリプト
+└── cdk.json
 ```
 
 ## インフラサイズの違い
@@ -26,9 +25,20 @@
 ### Small環境 (開発/テスト向け)
 - **VPC**: 2 AZ構成（パブリック/プライベートサブネット）
 - **RDS**: MySQL 8.0 シングルAZ (t3.small)
+  - 初期ストレージ: 20GB
+  - 最大ストレージ: 30GB
+  - バックアップ保持期間: 7日間
 - **ECS**: Fargate (256 CPU units, 512 MB) x 1
 - **Auto Scaling**: なし
 - **Redis**: シングルノード (t3.medium)
+- **S3バケット**:
+  - バージョニング有効
+  - サーバーサイド暗号化 (SSE-S3)
+  - パブリックアクセスブロック
+  - ライフサイクルルール:
+    - 30日後: IA (Infrequent Access)へ移行
+    - 90日後: Glacierへ移行
+    - 365日後: 有効期限切れ
 
 ### Medium環境 (ステージング向け)
 - **VPC**: 2 AZ構成（パブリック/プライベート/データベース専用サブネット）
@@ -76,14 +86,14 @@ aws configure
 
 1. 変更内容の確認:
 ```bash
-npm run cdk diff -- \
+cdk diff \
   --context projectName=MyProject \
   --context infraSize=small
 ```
 
 2. デプロイの実行:
 ```bash
-npm run cdk deploy -- \
+cdk deploy \
   --context projectName=MyProject \
   --context infraSize=small
 ```
@@ -91,23 +101,10 @@ npm run cdk deploy -- \
 ### スタックの削除
 
 ```bash
-npm run cdk destroy -- \
+cdk destroy \
   --context projectName=MyProject \
   --context infraSize=small
 ```
-
-### `run-cdk.js`の使用方法
-
-`run-cdk.js`は以下の機能を提供します：
-
-- インフラサイズの検証
-- デプロイ前の事前チェック
-- 環境変数の自動設定
-
-エラーハンドリング:
-- `infraSize`が無効な場合: エラーメッセージを表示し終了
-- 必要な環境変数が未設定の場合: 警告を表示
-- AWS認証情報が無効な場合: エラーメッセージを表示
 
 ### インフラサイズの設定
 
