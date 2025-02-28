@@ -95,11 +95,15 @@ export class InfraMediumStack extends cdk.Stack {
                     subnetType: ec2.SubnetType.PRIVATE_ISOLATED
                 }
             },
-            serverlessV2MinCapacity: 0.5,
-            serverlessV2MaxCapacity: 4,
-            writer: rds.ClusterInstance.serverlessV2('writer'),
+            serverlessV2MinCapacity: 0.5, // 最小0.5 ACU
+            serverlessV2MaxCapacity: 4.0,  // 最大4.0 ACU
+            writer: rds.ClusterInstance.serverlessV2('writer', {
+                scaleWithWriter: true
+            }),
             readers: [
-                rds.ClusterInstance.serverlessV2('reader1'),
+                rds.ClusterInstance.serverlessV2('reader1', {
+                    scaleWithWriter: true
+                }),
             ],
             vpc,
             vpcSubnets: {

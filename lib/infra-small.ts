@@ -3,6 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
@@ -104,6 +105,46 @@ export class InfraSmallStack extends cdk.Stack {
             fargateService.service,
             ec2.Port.tcp(3306),
             'Allow from Fargate service'
+        );
+
+        // ElastiCache (Redis)の設定
+        const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
+            subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
+            description: 'Subnet group for Redis cache',
+        });
+
+        const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
+            vpc,
+            description: 'Security group for Redis cache',
+            allowAllOutbound: true,
+        });
+
+        const redis = new elasticache.CfnCacheCluster(this, 'SmallRedis', {
+            engine: 'redis',
+            cacheNodeType: 'cache.t3.medium',
+            numCacheNodes: 1,
+            vpcSecurityGroupIds: [redisSecurityGroup.securityGroupId],
+            cacheSubnetGroupName: redisSubnetGroup.ref,
+            engineVersion: '7.0',
+            preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
+            autoMinorVersionUpgrade: true,
+        });
+
+        // RedisへのアクセスをFargateサービスに許可
+        redisSecurityGroup.addIngressRule(
+            fargateService.service.connections.securityGroups[0],
+            ec2.Port.tcp(6379),
+            'Allow from Fargate service'
+        );
+
+        // 環境変数にRedisエンドポイントを追加
+        fargateService.taskDefinition.defaultContainer?.addEnvironment(
+            'REDIS_ENDPOINT',
+            redis.attrRedisEndpointAddress
+        );
+        fargateService.taskDefinition.defaultContainer?.addEnvironment(
+            'REDIS_PORT',
+            redis.attrRedisEndpointPort
         );
     }
 }
