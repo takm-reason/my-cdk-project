@@ -42,13 +42,20 @@
 ### Large環境 (本番向け)
 - **VPC**: 3 AZ構成（パブリック/プライベート/データベース専用サブネット）
 - **RDS**: Aurora MySQL 3.04.0 クラスター (r6g.large) x 3
-- **ECS**: Fargate (1024 CPU units, 2048 MB) x 3-12
+- **ECS**:
+  - メインアプリケーション: Fargate (1024 CPU units, 2048 MB) x 3-12
+  - APIサービス: Fargate (1024 CPU units, 2048 MB) x 3-12
 - **Auto Scaling**: CPU使用率70%
 - **Redis**: クラスターモード (r6g.large) x 3 (レプリカ: 2)
 - **CloudFront**: Price Class 200
 - **WAF**: 高度な保護ルール
 - **Shield Advanced**: 有効
 - **CI/CD**: CodePipeline統合
+  - Gitリポジトリからのソースコードのビルドとデプロイを自動化
+  - コードのビルド: CodeBuild (Docker)
+  - デプロイ先: ECS Fargate
+  - ビルドログの保持: CloudWatch Logs (1ヶ月)
+  - パイプライン失敗時のCloudWatchアラーム設定
 
 ## セットアップ手順
 

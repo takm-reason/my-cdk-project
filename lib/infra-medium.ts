@@ -88,27 +88,16 @@ export class InfraMediumStack extends cdk.Stack {
             engine: rds.DatabaseClusterEngine.auroraMysql({
                 version: rds.AuroraMysqlEngineVersion.VER_3_04_0
             }),
-            instanceProps: {
-                vpc,
-                instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MEDIUM),
-                vpcSubnets: {
-                    subnetType: ec2.SubnetType.PRIVATE_ISOLATED
-                }
-            },
-            serverlessV2MinCapacity: 0.5, // 最小0.5 ACU
-            serverlessV2MaxCapacity: 4.0,  // 最大4.0 ACU
-            writer: rds.ClusterInstance.serverlessV2('writer', {
-                scaleWithWriter: true
-            }),
-            readers: [
-                rds.ClusterInstance.serverlessV2('reader1', {
-                    scaleWithWriter: true
-                }),
-            ],
             vpc,
             vpcSubnets: {
                 subnetType: ec2.SubnetType.PRIVATE_ISOLATED
             },
+            serverlessV2MinCapacity: 0.5, // 最小0.5 ACU
+            serverlessV2MaxCapacity: 4.0,  // 最大4.0 ACU
+            writer: rds.ClusterInstance.serverlessV2('writer'),
+            readers: [
+                rds.ClusterInstance.serverlessV2('reader1')
+            ],
             defaultDatabaseName: 'appdb',
         });
 
