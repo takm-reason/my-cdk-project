@@ -5,6 +5,8 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
@@ -15,6 +17,8 @@ export class InfraSmallStack extends cdk.Stack {
         // プロジェクト名と環境名を取得
         const projectName = this.node.tryGetContext('projectName') || 'MyProject';
         const environment = 'small';
+        const domainName = this.node.tryGetContext('domainName');
+        const useRoute53 = this.node.tryGetContext('useRoute53') === 'true';
 
         // ランダムなサフィックスを生成（8文字）
         const suffix = Math.random().toString(36).substring(2, 10);
@@ -28,7 +32,7 @@ export class InfraSmallStack extends cdk.Stack {
             removalPolicy: RemovalPolicy.RETAIN,
             lifecycleRules: [
                 {
-                    expiration: cdk.Duration.days(365),
+                    // 有効期限は設定せず、ライフサイクルルールのみを適用
                     transitions: [
                         {
                             storageClass: s3.StorageClass.INFREQUENT_ACCESS,
@@ -148,5 +152,29 @@ export class InfraSmallStack extends cdk.Stack {
             'REDIS_PORT',
             redis.attrRedisEndpointPort
         );
+
+        // Route53統合（オプション）
+        if (useRoute53 && domainName) {
+            // 既存のホストゾーンを参照
+            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+                domainName: domainName
+            });
+
+            // ALBのDNSレコードを作成
+            new route53.ARecord(this, 'ALBDnsRecord', {
+                zone: hostedZone,
+                target: route53.RecordTarget.fromAlias(
+                    new targets.LoadBalancerTarget(fargateService.loadBalancer)
+                ),
+                recordName: `${environment}.${domainName}`, // small.example.com
+                ttl: cdk.Duration.minutes(5),
+            });
+
+            // 環境変数にドメイン名を追加
+            fargateService.taskDefinition.defaultContainer?.addEnvironment(
+                'DOMAIN_NAME',
+                `${environment}.${domainName}`
+            );
+        }
     }
 }

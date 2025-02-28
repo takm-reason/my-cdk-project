@@ -10,6 +10,9 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 export class InfraMediumStack extends cdk.Stack {
@@ -94,10 +97,25 @@ export class InfraMediumStack extends cdk.Stack {
             },
             serverlessV2MinCapacity: 0.5, // 最小0.5 ACU
             serverlessV2MaxCapacity: 4.0,  // 最大4.0 ACU
-            writer: rds.ClusterInstance.serverlessV2('writer'),
+            writer: rds.ClusterInstance.serverlessV2('writer', {
+                autoMinorVersionUpgrade: true,
+                enablePerformanceInsights: true,
+                performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT, // 7日間
+            }),
             readers: [
-                rds.ClusterInstance.serverlessV2('reader1')
+                rds.ClusterInstance.serverlessV2('reader1', {
+                    autoMinorVersionUpgrade: true,
+                    enablePerformanceInsights: true,
+                    performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+                    scaleWithWriter: true, // ライターと同じスケーリング設定を使用
+                })
             ],
+            backup: {
+                retention: Duration.days(14), // バックアップ保持期間
+                preferredWindow: '03:00-04:00', // JST 12:00-13:00
+            },
+            cloudwatchLogsExports: ['error', 'general', 'slowquery'], // ログエクスポートの有効化
+            monitoringInterval: Duration.seconds(30), // 拡張モニタリングの有効化
             defaultDatabaseName: 'appdb',
         });
 
@@ -221,6 +239,26 @@ export class InfraMediumStack extends cdk.Stack {
             ],
         });
 
+        // カスタムドメインの設定（オプション）
+        const domainName = this.node.tryGetContext('domainName');
+        const useCustomDomain = this.node.tryGetContext('useCustomDomain') === 'true';
+
+        let certificate;
+        if (useCustomDomain && domainName) {
+            // Route53のホストゾーンを参照
+            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+                domainName
+            });
+
+            // CloudFront用のACM証明書（us-east-1リージョンに作成）
+            certificate = new acm.DnsValidatedCertificate(this, 'CloudFrontCertificate', {
+                domainName: `*.${domainName}`,
+                hostedZone,
+                region: 'us-east-1', // CloudFront用の証明書はus-east-1に作成する必要がある
+                validation: acm.CertificateValidation.fromDns(hostedZone),
+            });
+        }
+
         // CloudFrontディストリビューションの設定
         const distribution = new cloudfront.Distribution(this, 'MediumDistribution', {
             defaultBehavior: {
@@ -231,10 +269,36 @@ export class InfraMediumStack extends cdk.Stack {
                 cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
             },
+            domainNames: useCustomDomain && domainName ? [`${environment}.${domainName}`] : undefined,
+            certificate: useCustomDomain && certificate ? certificate : undefined,
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
             webAclId: wafAcl.attrArn,
             enableLogging: true,
+            logBucket: new s3.Bucket(this, 'CloudFrontLogsBucket', {
+                encryption: s3.BucketEncryption.S3_MANAGED,
+                removalPolicy: RemovalPolicy.RETAIN,
+                lifecycleRules: [
+                    {
+                        expiration: Duration.days(90),
+                    }
+                ]
+            }),
         });
+
+        // Route53 DNSレコードの作成（カスタムドメインが設定されている場合）
+        if (useCustomDomain && domainName) {
+            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+                domainName
+            });
+
+            new route53.ARecord(this, 'CloudFrontAliasRecord', {
+                zone: hostedZone,
+                target: route53.RecordTarget.fromAlias(
+                    new targets.CloudFrontTarget(distribution)
+                ),
+                recordName: `${environment}.${domainName}`,
+            });
+        }
 
         // CloudFrontディストリビューションからのS3バケットへのアクセスを許可
         bucket.addToResourcePolicy(new iam.PolicyStatement({

@@ -23,14 +23,14 @@
 本プロジェクトでは、`infraSize`パラメータにより3種類の環境サイズを提供しています：
 
 ### Small環境 (開発/テスト向け)
+小規模環境では、基本的なアプリケーション実行に必要な最小限のリソースを提供します：
 - **VPC**: 2 AZ構成（パブリック/プライベートサブネット）
+- **ECS**: Fargate (256 CPU units, 512 MB) x 1
+- **ALB**: Application Load Balancer
 - **RDS**: MySQL 8.0 シングルAZ (t3.small)
   - 初期ストレージ: 20GB
   - 最大ストレージ: 30GB
   - バックアップ保持期間: 7日間
-- **ECS**: Fargate (256 CPU units, 512 MB) x 1
-- **Auto Scaling**: なし
-- **Redis**: シングルノード (t3.medium)
 - **S3バケット**:
   - バージョニング有効
   - サーバーサイド暗号化 (SSE-S3)
@@ -38,34 +38,70 @@
   - ライフサイクルルール:
     - 30日後: IA (Infrequent Access)へ移行
     - 90日後: Glacierへ移行
-    - 365日後: 有効期限切れ
+- **DNS**: Route53ホストゾーン統合（オプション）
 
 ### Medium環境 (ステージング向け)
+中規模環境では、本番環境に近い構成でより堅牢なインフラを提供します：
 - **VPC**: 2 AZ構成（パブリック/プライベート/データベース専用サブネット）
-- **RDS**: Aurora MySQL 3.04.0 Serverless v2 (0.5-4 ACU)
 - **ECS**: Fargate (512 CPU units, 1024 MB) x 2-8
-- **Auto Scaling**: CPU使用率70%
-- **Redis**: シングルノード (t3.medium)
+- **Auto Scaling**: CPU使用率70%でスケーリング
+- **RDS**: Aurora MySQL 3.04.0 Serverless v2
+  - オートスケーリング: 0.5-4 ACU
+  - マルチAZ構成
+- **ElastiCache**: Redis シングルノード (t3.medium)
 - **CloudFront**: Price Class 100
+  - カスタムドメイン対応
+  - SSL/TLS証明書統合
 - **WAF**: 基本的な保護ルール
+  - レートリミット
+  - 一般的な攻撃からの保護
 
 ### Large環境 (本番向け)
+大規模環境では、高可用性と堅牢性を重視した本番運用向けの構成を提供します：
 - **VPC**: 3 AZ構成（パブリック/プライベート/データベース専用サブネット）
-- **RDS**: Aurora MySQL 3.04.0 クラスター (r6g.large) x 3
 - **ECS**:
   - メインアプリケーション: Fargate (1024 CPU units, 2048 MB) x 3-12
-  - APIサービス: Fargate (1024 CPU units, 2048 MB) x 3-12
-- **Auto Scaling**: CPU使用率70%
-- **Redis**: クラスターモード (r6g.large) x 3 (レプリカ: 2)
+  - APIサービス: 独立したFargateサービス (1024 CPU units, 2048 MB) x 3-12
+  - コンテナヘルスチェック
+  - ECSタスク実行ロール
+- **ALB**:
+  - マルチリスナー構成
+  - 複数ターゲットグループ
+  - SSL/TLS終端
+- **Aurora MySQL**:
+  - バージョン: 3.04.0
+  - インスタンスタイプ: r6g.large
+  - マルチAZ: 3ノード（プライマリ + 2リードレプリカ）
+  - 自動バックアップ設定
+- **ElastiCache**:
+  - Redisクラスターモード
+  - インスタンスタイプ: r6g.large
+  - 3シャード（各シャードに2レプリカ）
+  - 自動フェイルオーバー
 - **CloudFront**: Price Class 200
-- **WAF**: 高度な保護ルール
-- **Shield Advanced**: 有効
-- **CI/CD**: CodePipeline統合
-  - Gitリポジトリからのソースコードのビルドとデプロイを自動化
-  - コードのビルド: CodeBuild (Docker)
-  - デプロイ先: ECS Fargate
-  - ビルドログの保持: CloudWatch Logs (1ヶ月)
-  - パイプライン失敗時のCloudWatchアラーム設定
+  - エッジロケーション最適化
+  - カスタムエラーページ
+  - APIキャッシュ戦略
+- **セキュリティ**:
+  - WAF（高度な保護ルール）
+  - AWS Shield Advanced
+  - セキュリティグループの厳格な制御
+  - KMS暗号化の統合
+- **監視とログ管理**:
+  - CloudWatch Logs（1ヶ月保持）
+  - CloudWatch Metrics
+  - カスタムメトリクス
+  - アラーム設定
+- **システム管理**:
+  - AWS Systems Manager
+  - パラメータストア
+  - セッション管理
+- **CI/CD**:
+  - CodePipelineによる自動化
+  - CodeCommitリポジトリ
+  - CodeBuildによるDockerビルド
+  - CodeDeployによるECSデプロイ
+  - パイプライン失敗時のアラート
 
 ## セットアップ手順
 
@@ -112,6 +148,53 @@ cdk destroy \
 - デフォルト値: `small`
 - 選択肢: `small`, `medium`, `large`
 - 指定方法: `--context infraSize=<サイズ>`
+
+### コンテキストパラメータの詳細
+
+デプロイ時に以下のパラメータを指定できます：
+
+#### 必須パラメータ
+- **infraSize**:
+  - デフォルト値: `small`
+  - 選択肢: `small`, `medium`, `large`
+  - 説明: インフラストラクチャのサイズを指定
+
+#### オプショナルパラメータ
+- **projectName**:
+  - デフォルト値: `MyProject`
+  - 説明: プロジェクト名（スタック名やリソースタグに使用）
+
+- **domainName**:
+  - 説明: Route53で管理されているドメイン名
+  - 使用環境: 全環境
+  - 例: `example.com`
+
+- **useRoute53** (Small環境用):
+  - デフォルト値: `false`
+  - 説明: Route53との統合を有効化
+  - 必要条件: `domainName`の指定が必要
+
+- **useCustomDomain** (Medium/Large環境用):
+  - デフォルト値: `false`
+  - 説明: CloudFrontでカスタムドメインを使用
+  - 必要条件: `domainName`の指定が必要
+
+#### 使用例
+```bash
+# Small環境でRoute53統合を有効化する例
+cdk deploy \
+  --context projectName=MyApp \
+  --context infraSize=small \
+  --context domainName=example.com \
+  --context useRoute53=true
+
+# Medium環境でカスタムドメインを使用する例
+cdk deploy \
+  --context projectName=MyApp \
+  --context infraSize=medium \
+  --context domainName=example.com \
+  --context useCustomDomain=true
+```
 
 ## 設定ファイルの概要
 
