@@ -10,6 +10,12 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as shield from 'aws-cdk-lib/aws-shield';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as codebuild from 'aws-cdk-lib/aws-codebuild';
+import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
+import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions';
+import * as codecommit from 'aws-cdk-lib/aws-codecommit';
 import { Duration } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
@@ -405,5 +411,150 @@ export class InfraLargeStack extends cdk.Stack {
             'REDIS_PORT',
             redisCluster.attrConfigurationEndPointPort
         );
+
+        // CloudWatch Logs設定
+        const mainAppLogGroup = new logs.LogGroup(this, 'MainAppLogGroup', {
+            logGroupName: '/ecs/main-app',
+            retention: logs.RetentionDays.ONE_MONTH,
+            removalPolicy: cdk.RemovalPolicy.DESTROY
+        });
+
+        const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
+            logGroupName: '/ecs/api',
+            retention: logs.RetentionDays.ONE_MONTH,
+            removalPolicy: cdk.RemovalPolicy.DESTROY
+        });
+
+        // SSMパラメータストアの設定
+        const appConfig = new ssm.StringParameter(this, 'AppConfig', {
+            parameterName: '/app/config',
+            stringValue: JSON.stringify({
+                environment: 'production',
+                apiEndpoint: apiListener.listenerArn,
+                databaseEndpoint: database.clusterEndpoint.hostname,
+                redisEndpoint: redisCluster.attrConfigurationEndPointAddress,
+            }),
+            description: 'Application configuration',
+            tier: ssm.ParameterTier.STANDARD,
+            type: ssm.ParameterType.STRING
+        });
+
+        // アプリケーションリポジトリ
+        const repository = new codecommit.Repository(this, 'ApplicationRepo', {
+            repositoryName: 'large-app-repository',
+            description: 'Application source code repository'
+        });
+
+        // CodeBuildプロジェクト
+        const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
+            buildSpec: codebuild.BuildSpec.fromObject({
+                version: '0.2',
+                phases: {
+                    pre_build: {
+                        commands: [
+                            'aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI',
+                            'COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)',
+                            'IMAGE_TAG=$${COMMIT_HASH:=latest}'
+                        ]
+                    },
+                    build: {
+                        commands: [
+                            'docker build -t $ECR_REPO_URI:$IMAGE_TAG .',
+                            'docker tag $ECR_REPO_URI:$IMAGE_TAG $ECR_REPO_URI:latest'
+                        ]
+                    },
+                    post_build: {
+                        commands: [
+                            'docker push $ECR_REPO_URI:$IMAGE_TAG',
+                            'docker push $ECR_REPO_URI:latest',
+                            'echo Writing image definitions file...',
+                            'printf \'{"ImageURI":"%s"}\' $ECR_REPO_URI:$IMAGE_TAG > imageDefinitions.json'
+                        ]
+                    }
+                },
+                artifacts: {
+                    files: ['imageDefinitions.json']
+                }
+            }),
+            environment: {
+                buildImage: codebuild.LinuxBuildImage.STANDARD_5_0,
+                privileged: true,
+                environmentVariables: {
+                    ECR_REPO_URI: {
+                        value: mainAppService.taskDefinition.defaultContainer?.containerName || ''
+                    }
+                }
+            },
+            logging: {
+                cloudWatch: {
+                    enabled: true,
+                    logGroup: new logs.LogGroup(this, 'BuildLogGroup', {
+                        logGroupName: '/codebuild/app-build',
+                        retention: logs.RetentionDays.ONE_MONTH,
+                        removalPolicy: cdk.RemovalPolicy.DESTROY
+                    })
+                }
+            }
+        });
+
+        // CI/CDパイプライン
+        const pipeline = new codepipeline.Pipeline(this, 'DeploymentPipeline', {
+            pipelineName: 'LargeAppPipeline',
+            crossAccountKeys: false,
+            restartExecutionOnUpdate: true
+        });
+
+        // ソースステージ
+        pipeline.addStage({
+            stageName: 'Source',
+            actions: [
+                new codepipeline_actions.CodeCommitSourceAction({
+                    actionName: 'CodeCommit_Source',
+                    repository: repository,
+                    branch: 'main',
+                    output: new codepipeline.Artifact('SourceOutput')
+                })
+            ]
+        });
+
+        // ビルドステージ
+        pipeline.addStage({
+            stageName: 'Build',
+            actions: [
+                new codepipeline_actions.CodeBuildAction({
+                    actionName: 'Build',
+                    project: buildProject,
+                    input: new codepipeline.Artifact('SourceOutput'),
+                    outputs: [new codepipeline.Artifact('BuildOutput')]
+                })
+            ]
+        });
+
+        // デプロイステージ
+        pipeline.addStage({
+            stageName: 'Deploy',
+            actions: [
+                new codepipeline_actions.EcsDeployAction({
+                    actionName: 'Deploy_to_ECS',
+                    service: mainAppService,
+                    input: new codepipeline.Artifact('BuildOutput')
+                })
+            ]
+        });
+
+        // パイプラインのCloudWatchアラーム
+        new cdk.aws_cloudwatch.Alarm(this, 'PipelineFailureAlarm', {
+            metric: new cdk.aws_cloudwatch.Metric({
+                namespace: 'AWS/CodePipeline',
+                metricName: 'FailedPipeline',
+                dimensionsMap: {
+                    PipelineName: pipeline.pipelineName
+                }
+            }),
+            threshold: 1,
+            evaluationPeriods: 1,
+            comparisonOperator: cdk.aws_cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treatMissingData: cdk.aws_cloudwatch.TreatMissingData.NOT_BREACHING
+        });
     }
 }
