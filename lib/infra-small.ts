@@ -102,7 +102,7 @@ export class InfraSmallStack extends cdk.Stack {
                 },
             },
             publicLoadBalancer: true,
-            minHealthyPercent: 100,
+            minHealthyPercent: 50,
             maxHealthyPercent: 100, // Auto Scalingを無効化（同時に実行できるタスク数を1に制限）
         });
 
