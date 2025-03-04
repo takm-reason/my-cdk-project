@@ -14,6 +14,8 @@
 │   ├── infra-medium.ts      # Medium環境のインフラ定義
 │   ├── infra-large.ts       # Large環境のインフラ定義
 │   └── my-cdk-project-stack.ts    # メインのCDKスタック定義
+├── scripts/
+│   └── get-secrets.ts      # シークレット取得スクリプト
 ├── package.json
 ├── tsconfig.json
 └── cdk.json
@@ -60,93 +62,44 @@
 - `removalPolicy: RETAIN` でシークレットを保護
 - IAMロールベースのアクセス制御
 
-## Railsアプリケーションへの接続情報の受け渡し
+## 開発用ツール
 
-### 環境変数の設定方法
+### シークレット取得スクリプト
 
-#### 開発環境 (dev)
+開発環境で使用するシークレット値を安全に取得し、.env形式で出力するスクリプトを提供しています。
+
 ```bash
-# デプロイ後に自動生成される.envファイル例
-DATABASE_HOST=xxx.xxx.rds.amazonaws.com
-DATABASE_PORT=3306
-DATABASE_NAME=appdb
+# 基本的な使用方法
+npm run get-secrets MyProject dev .env.local
+
+# 使用例（開発環境の場合）
+npm run get-secrets MyProject dev .env.development
+
+# 使用例（検証環境の場合）
+npm run get-secrets MyProject staging .env.staging
+```
+
+出力される.envファイルの例：
+```bash
+# Database configuration
 DATABASE_USERNAME=admin
-DATABASE_PASSWORD=xxx
-REDIS_ENDPOINT=xxx.xxx.cache.amazonaws.com
-REDIS_PORT=6379
-REDIS_AUTH_TOKEN=xxx
+DATABASE_PASSWORD=xxxxx
+DATABASE_NAME=appdb
+
+# Redis configuration
+REDIS_AUTH_TOKEN=xxxxx
+
+# Environment
 RAILS_ENV=development
 ```
 
-#### 検証・本番環境
-ECSタスク定義での環境変数設定例：
-```typescript
-taskDefinition.addContainer('AppContainer', {
-  // ...
-  secrets: {
-    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(databaseSecret, 'username'),
-    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(databaseSecret, 'password'),
-    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(redisSecret),
-  },
-  environment: {
-    DATABASE_HOST: database.instanceEndpoint.hostname,
-    DATABASE_PORT: database.instanceEndpoint.port.toString(),
-    DATABASE_NAME: 'appdb',
-    RAILS_ENV: 'production',
-  },
-});
-```
+⚠️ **注意事項**:
+- 生成された.envファイルには機密情報が含まれるため、必ず.gitignoreに追加してください
+- AWS認証情報が正しく設定されていることを確認してください
+- 出力ファイルは、アプリケーションのルートディレクトリに配置することを推奨します
 
-## リソース情報の出力
+## インフラサイズの違い
 
-### CDK Outputsの使用
+[以下、既存のインフラサイズの説明が続きます...]
 
-デプロイ時に以下のコマンドを使用してリソース情報を取得できます：
-```bash
-cdk deploy --outputs-file ./outputs/my-stack-outputs.json
-```
-
-出力例：
-```json
-{
-  "MyStack": {
-    "VpcId": "vpc-0123456789abcdef0",
-    "DatabaseEndpoint": "xxx.xxx.rds.amazonaws.com",
-    "DatabaseSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
-    "RedisEndpoint": "xxx.xxx.cache.amazonaws.com",
-    "RedisSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
-    "LoadBalancerDNS": "xxx.elb.amazonaws.com"
-  }
-}
-```
-
-[以下、既存のREADMEの内容が続きます...]
-
-## セキュリティのベストプラクティス
-
-### 1. シークレット管理
-- データベースパスワードやAPIキーは必ずSecrets Managerで管理
-- 環境変数での直接指定は避ける
-- シークレットの自動ローテーションを検討
-
-### 2. ネットワークセキュリティ
-- VPCエンドポイントの活用
-- セキュリティグループの最小権限設定
-- プライベートサブネットの活用
-
-### 3. 暗号化
-- 保管データの暗号化（S3, RDS, ElastiCache）
-- 通信の暗号化（HTTPS, TLS）
-- KMSカスタマーマネージドキーの使用
-
-### 4. モニタリングとロギング
-- CloudWatch Logsの有効化
-- VPCフローログの有効化
-- CloudTrailの有効化
-
-### 5. コンプライアンス
-- タグ付けの一貫性
-- リソースの命名規則
-- 監査ログの保持
-
-[元のREADMEの残りの内容...]
+[元のREADMEの残りの内容をここに配置]
