@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { SecretValue } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export interface InfraBaseStackProps extends cdk.StackProps {
@@ -48,6 +49,8 @@ export class InfrastructureStack extends cdk.Stack {
         this.redisSecret = new secretsmanager.Secret(this, 'RedisSecret', {
             secretName: `${this.projectPrefix}/${this.envName}/redis`,
             generateSecretString: {
+                generateStringKey: 'authToken',
+                secretStringTemplate: JSON.stringify({}),
                 excludePunctuation: true,
                 passwordLength: 16,
             },
@@ -72,18 +75,10 @@ export class InfrastructureStack extends cdk.Stack {
 
     // シークレット取得のヘルパーメソッド
     protected getDatabaseSecretValue(key: string): string {
-        return secretsmanager.Secret.fromSecretNameV2(
-            this,
-            'DatabaseSecretValue',
-            `${this.projectPrefix}/${this.envName}/database`
-        ).secretValueFromJson(key).toString();
+        return this.databaseSecret.secretValueFromJson(key).toString();
     }
 
     protected getRedisSecretValue(): string {
-        return secretsmanager.Secret.fromSecretNameV2(
-            this,
-            'RedisSecretValue',
-            `${this.projectPrefix}/${this.envName}/redis`
-        ).secretValue.toString();
+        return this.redisSecret.secretValueFromJson('authToken').toString();
     }
 }

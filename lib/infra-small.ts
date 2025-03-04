@@ -7,6 +7,7 @@ import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { InfrastructureStack, InfraBaseStackProps } from './infra-base-stack';
@@ -70,48 +71,10 @@ export class InfraSmallStack extends InfrastructureStack {
             maxAllocatedStorage: 30,
             databaseName: 'appdb',
             multiAz: false,
-            deletionProtection: true,
+            deletionProtection: false, // 開発環境なのでfalse
+            removalPolicy: RemovalPolicy.DESTROY, // 開発環境なのでDESTROY
             backupRetention: cdk.Duration.days(7),
         });
-
-        // ECS Fargateクラスター
-        const cluster = new ecs.Cluster(this, 'SmallCluster', {
-            vpc,
-            enableFargateCapacityProviders: true,
-        });
-
-        // ALBとECS Fargateサービスの統合
-        const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallService', {
-            cluster,
-            cpu: 256,
-            memoryLimitMiB: 512,
-            desiredCount: 1,
-            taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('nginx:latest'),
-                containerPort: 80,
-                secrets: {
-                    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
-                    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
-                    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
-                },
-                environment: {
-                    DATABASE_HOST: database.instanceEndpoint.hostname,
-                    DATABASE_PORT: database.instanceEndpoint.port.toString(),
-                    DATABASE_NAME: 'appdb',
-                    RAILS_ENV: 'production',
-                },
-            },
-            publicLoadBalancer: true,
-            minHealthyPercent: 50,
-            maxHealthyPercent: 100,
-        });
-
-        // RDSへのアクセスを許可
-        database.connections.allowFrom(
-            fargateService.service,
-            ec2.Port.tcp(3306),
-            'Allow from Fargate service'
-        );
 
         // ElastiCache (Redis)の設定
         const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
@@ -125,6 +88,7 @@ export class InfraSmallStack extends InfrastructureStack {
             allowAllOutbound: true,
         });
 
+        // Redis ReplicationGroupの作成（自動フェイルオーバー無効）
         const redis = new elasticache.CfnReplicationGroup(this, 'SmallRedis', {
             replicationGroupDescription: 'Redis cluster for small environment',
             engine: 'redis',
@@ -137,8 +101,62 @@ export class InfraSmallStack extends InfrastructureStack {
             autoMinorVersionUpgrade: true,
             transitEncryptionEnabled: true,
             atRestEncryptionEnabled: true,
-            authToken: this.getRedisSecretValue(),
+            automaticFailoverEnabled: false, // 自動フェイルオーバーを無効化
         });
+
+        // ECS Fargateクラスター
+        const cluster = new ecs.Cluster(this, 'SmallCluster', {
+            vpc,
+            enableFargateCapacityProviders: true,
+        });
+
+        // ECSタスク定義でのコンテナ環境変数設定
+        const taskDefinition = new ecs.FargateTaskDefinition(this, 'SmallTaskDef', {
+            cpu: 256,
+            memoryLimitMiB: 512,
+        });
+
+        const container = taskDefinition.addContainer('AppContainer', {
+            image: ecs.ContainerImage.fromRegistry('nginx:latest'), // デモ用のイメージ
+            secrets: {
+                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret, 'authToken'),
+            },
+            environment: {
+                DATABASE_HOST: database.instanceEndpoint.hostname,
+                DATABASE_PORT: database.instanceEndpoint.port.toString(),
+                DATABASE_NAME: 'appdb',
+                RAILS_ENV: 'development', // 開発環境なのでdevelopment
+                REDIS_URL: redis.attrPrimaryEndPointAddress,
+                REDIS_PORT: redis.attrPrimaryEndPointPort,
+            },
+            logging: ecs.LogDrivers.awsLogs({
+                streamPrefix: 'small-service',
+            }),
+        });
+
+        container.addPortMappings({
+            containerPort: 80,
+            protocol: ecs.Protocol.TCP,
+        });
+
+        // ALBとECS Fargateサービスの統合
+        const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallService', {
+            cluster,
+            taskDefinition,
+            publicLoadBalancer: true,
+            desiredCount: 1,
+            minHealthyPercent: 50,
+            maxHealthyPercent: 100,
+        });
+
+        // RDSへのアクセスを許可
+        database.connections.allowFrom(
+            fargateService.service,
+            ec2.Port.tcp(3306),
+            'Allow from Fargate service'
+        );
 
         // RedisへのアクセスをFargateサービスに許可
         redisSecurityGroup.addIngressRule(
@@ -153,7 +171,7 @@ export class InfraSmallStack extends InfrastructureStack {
                 domainName
             });
 
-            const aRecord = new route53.ARecord(this, 'ALBDnsRecord', {
+            new route53.ARecord(this, 'ALBDnsRecord', {
                 zone: hostedZone,
                 target: route53.RecordTarget.fromAlias(
                     new targets.LoadBalancerTarget(fargateService.loadBalancer)
@@ -162,10 +180,7 @@ export class InfraSmallStack extends InfrastructureStack {
             });
 
             // 環境変数にドメイン名を追加
-            fargateService.taskDefinition.defaultContainer?.addEnvironment(
-                'DOMAIN_NAME',
-                `${this.envName}.${domainName}`
-            );
+            container.addEnvironment('DOMAIN_NAME', `${this.envName}.${domainName}`);
         }
 
         // CDK Outputs

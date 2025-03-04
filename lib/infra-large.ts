@@ -162,166 +162,6 @@ export class InfraLargeStack extends InfrastructureStack {
             })],
         });
 
-        // メインアプリケーションのタスク定義
-        const mainAppTaskDef = new ecs.FargateTaskDefinition(this, 'MainAppTask', {
-            cpu: 1024,
-            memoryLimitMiB: 2048,
-        });
-
-        // APIサービスのタスク定義
-        const apiTaskDef = new ecs.FargateTaskDefinition(this, 'ApiTask', {
-            cpu: 1024,
-            memoryLimitMiB: 2048,
-        });
-
-        // コンテナの環境変数とシークレットの設定
-        const mainContainer = mainAppTaskDef.addContainer('MainAppContainer', {
-            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
-            secrets: {
-                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
-                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
-                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
-            },
-            environment: {
-                DATABASE_HOST: database.clusterEndpoint.hostname,
-                DATABASE_PORT: database.clusterEndpoint.port.toString(),
-                DATABASE_NAME: 'appdb',
-                RAILS_ENV: 'production',
-            },
-            logging: new ecs.AwsLogDriver({
-                streamPrefix: 'main-app',
-                logRetention: logs.RetentionDays.ONE_MONTH,
-            }),
-        });
-
-        const apiContainer = apiTaskDef.addContainer('ApiContainer', {
-            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
-            secrets: {
-                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
-                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
-                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
-            },
-            environment: {
-                DATABASE_HOST: database.clusterEndpoint.hostname,
-                DATABASE_PORT: database.clusterEndpoint.port.toString(),
-                DATABASE_NAME: 'appdb',
-                RAILS_ENV: 'production',
-            },
-            logging: new ecs.AwsLogDriver({
-                streamPrefix: 'api',
-                logRetention: logs.RetentionDays.ONE_MONTH,
-            }),
-        });
-
-        mainContainer.addPortMappings({ containerPort: 80 });
-        apiContainer.addPortMappings({ containerPort: 8080 });
-
-        // メインアプリケーションのECSサービス
-        const mainAppService = new ecs.FargateService(this, 'MainAppService', {
-            cluster,
-            taskDefinition: mainAppTaskDef,
-            desiredCount: 3,
-            minHealthyPercent: 50,
-            maxHealthyPercent: 200,
-            healthCheckGracePeriod: Duration.seconds(60),
-            platformVersion: ecs.FargatePlatformVersion.VERSION1_4,
-            enableExecuteCommand: true,
-        });
-
-        // APIサービスのECSサービス
-        const apiService = new ecs.FargateService(this, 'ApiService', {
-            cluster,
-            taskDefinition: apiTaskDef,
-            desiredCount: 3,
-            minHealthyPercent: 50,
-            maxHealthyPercent: 200,
-            healthCheckGracePeriod: Duration.seconds(60),
-            platformVersion: ecs.FargatePlatformVersion.VERSION1_4,
-            enableExecuteCommand: true,
-        });
-
-        // メインアプリケーションのターゲットグループ
-        const mainTargetGroup = new elbv2.ApplicationTargetGroup(this, 'MainTargetGroup', {
-            vpc,
-            port: 80,
-            protocol: elbv2.ApplicationProtocol.HTTP,
-            targetType: elbv2.TargetType.IP,
-            healthCheck: {
-                path: '/health',
-                healthyThresholdCount: 2,
-                unhealthyThresholdCount: 3,
-                timeout: Duration.seconds(10),
-                interval: Duration.seconds(30),
-            },
-            deregistrationDelay: Duration.seconds(30),
-        });
-
-        // APIのターゲットグループ
-        const apiTargetGroup = new elbv2.ApplicationTargetGroup(this, 'ApiTargetGroup', {
-            vpc,
-            port: 8080,
-            protocol: elbv2.ApplicationProtocol.HTTP,
-            targetType: elbv2.TargetType.IP,
-            healthCheck: {
-                path: '/api/health',
-                healthyThresholdCount: 2,
-                unhealthyThresholdCount: 3,
-                timeout: Duration.seconds(10),
-                interval: Duration.seconds(30),
-            },
-            deregistrationDelay: Duration.seconds(30),
-        });
-
-        // ターゲットグループをリスナーに追加
-        httpsListener.addTargetGroups('MainTargetGroup', {
-            targetGroups: [mainTargetGroup],
-        });
-
-        apiListener.addTargetGroups('ApiTargetGroup', {
-            targetGroups: [apiTargetGroup],
-        });
-
-        // ECSサービスをターゲットグループに登録
-        mainAppService.attachToApplicationTargetGroup(mainTargetGroup);
-        apiService.attachToApplicationTargetGroup(apiTargetGroup);
-
-        // Auto Scaling設定（メインアプリケーション）
-        const mainScaling = mainAppService.autoScaleTaskCount({
-            minCapacity: 3,
-            maxCapacity: 12,
-        });
-
-        mainScaling.scaleOnCpuUtilization('MainCpuScaling', {
-            targetUtilizationPercent: 70,
-            scaleInCooldown: Duration.seconds(60),
-            scaleOutCooldown: Duration.seconds(60),
-        });
-
-        // Auto Scaling設定（APIサービス）
-        const apiScaling = apiService.autoScaleTaskCount({
-            minCapacity: 3,
-            maxCapacity: 12,
-        });
-
-        apiScaling.scaleOnCpuUtilization('ApiCpuScaling', {
-            targetUtilizationPercent: 70,
-            scaleInCooldown: Duration.seconds(60),
-            scaleOutCooldown: Duration.seconds(60),
-        });
-
-        // RDSへのアクセスを許可
-        database.connections.allowFrom(
-            mainAppService,
-            ec2.Port.tcp(3306),
-            'Allow from main Fargate service'
-        );
-
-        database.connections.allowFrom(
-            apiService,
-            ec2.Port.tcp(3306),
-            'Allow from API Fargate service'
-        );
-
         // ElastiCache (Redis Cluster)の設定
         const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
             subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }).subnetIds,
@@ -350,254 +190,108 @@ export class InfraLargeStack extends InfrastructureStack {
             autoMinorVersionUpgrade: true,
             atRestEncryptionEnabled: true,
             transitEncryptionEnabled: true,
-            authToken: this.getRedisSecretValue(),
         });
 
-        // WAF（高度な設定）
-        const wafAcl = new wafv2.CfnWebACL(this, 'LargeWAF', {
-            defaultAction: { allow: {} },
-            scope: 'CLOUDFRONT',
-            visibilityConfig: {
-                cloudWatchMetricsEnabled: true,
-                metricName: 'LargeWAFMetrics',
-                sampledRequestsEnabled: true,
+        // メインアプリケーションのタスク定義
+        const mainAppTaskDef = new ecs.FargateTaskDefinition(this, 'MainAppTask', {
+            cpu: 1024,
+            memoryLimitMiB: 2048,
+        });
+
+        // APIサービスのタスク定義
+        const apiTaskDef = new ecs.FargateTaskDefinition(this, 'ApiTask', {
+            cpu: 1024,
+            memoryLimitMiB: 2048,
+        });
+
+        // コンテナの環境変数とシークレットの設定
+        const mainContainer = mainAppTaskDef.addContainer('MainAppContainer', {
+            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
+            secrets: {
+                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret, 'authToken'),
             },
-            rules: [
-                {
-                    name: 'RateLimit',
-                    priority: 1,
-                    statement: {
-                        rateBasedStatement: {
-                            limit: 3000,
-                            aggregateKeyType: 'IP',
-                        },
-                    },
-                    action: { block: {} },
-                    visibilityConfig: {
-                        cloudWatchMetricsEnabled: true,
-                        metricName: 'RateLimitRule',
-                        sampledRequestsEnabled: true,
-                    },
-                },
-                {
-                    name: 'AWSManagedRulesCommonRuleSet',
-                    priority: 2,
-                    statement: {
-                        managedRuleGroupStatement: {
-                            vendorName: 'AWS',
-                            name: 'AWSManagedRulesCommonRuleSet',
-                        },
-                    },
-                    overrideAction: { none: {} },
-                    visibilityConfig: {
-                        cloudWatchMetricsEnabled: true,
-                        metricName: 'AWSManagedRulesCommonRuleSetMetric',
-                        sampledRequestsEnabled: true,
-                    },
-                },
-                {
-                    name: 'AWSManagedRulesKnownBadInputsRuleSet',
-                    priority: 3,
-                    statement: {
-                        managedRuleGroupStatement: {
-                            vendorName: 'AWS',
-                            name: 'AWSManagedRulesKnownBadInputsRuleSet',
-                        },
-                    },
-                    overrideAction: { none: {} },
-                    visibilityConfig: {
-                        cloudWatchMetricsEnabled: true,
-                        metricName: 'KnownBadInputsRuleSetMetric',
-                        sampledRequestsEnabled: true,
-                    },
-                },
-                {
-                    name: 'AWSManagedRulesSQLiRuleSet',
-                    priority: 4,
-                    statement: {
-                        managedRuleGroupStatement: {
-                            vendorName: 'AWS',
-                            name: 'AWSManagedRulesSQLiRuleSet',
-                        },
-                    },
-                    overrideAction: { none: {} },
-                    visibilityConfig: {
-                        cloudWatchMetricsEnabled: true,
-                        metricName: 'SQLiRuleSetMetric',
-                        sampledRequestsEnabled: true,
-                    },
-                },
-            ],
-        });
-
-        // AWS Shield Advancedの有効化
-        const shieldProtection = new shield.CfnProtection(this, 'ShieldProtection', {
-            name: 'LargeEnvironmentProtection',
-            resourceArn: alb.loadBalancerArn,
-        });
-
-        // CloudFrontディストリビューションの設定（高度な設定）
-        const distribution = new cloudfront.Distribution(this, 'LargeDistribution', {
-            defaultBehavior: {
-                origin: new origins.LoadBalancerV2Origin(alb, {
-                    protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-                    httpsPort: 443,
-                }),
-                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-                originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
-                allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-                compress: true,
-            },
-            additionalBehaviors: {
-                '/api/*': {
-                    origin: new origins.LoadBalancerV2Origin(alb, {
-                        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-                        httpsPort: 8443,
-                    }),
-                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                    cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-                    originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
-                    allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-                },
-            },
-            priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
-            webAclId: wafAcl.attrArn,
-            enableLogging: true,
-            logBucket: new s3.Bucket(this, 'CloudFrontLogsBucket', {
-                encryption: s3.BucketEncryption.S3_MANAGED,
-                removalPolicy: RemovalPolicy.RETAIN,
-                lifecycleRules: [
-                    {
-                        expiration: Duration.days(90),
-                    }
-                ]
-            }),
-            errorResponses: [
-                {
-                    httpStatus: 403,
-                    responsePagePath: '/error/403.html',
-                    responseHttpStatus: 403,
-                    ttl: Duration.minutes(30),
-                },
-                {
-                    httpStatus: 404,
-                    responsePagePath: '/error/404.html',
-                    responseHttpStatus: 404,
-                    ttl: Duration.minutes(30),
-                },
-            ],
-        });
-
-        // CloudFrontディストリビューションからのS3バケットへのアクセスを許可
-        bucket.addToResourcePolicy(new iam.PolicyStatement({
-            actions: ['s3:GetObject'],
-            resources: [bucket.arnForObjects('*')],
-            principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
-            conditions: {
-                'StringEquals': {
-                    'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`
-                }
-            }
-        }));
-
-        // CI/CDパイプライン関連のリソース
-        const repository = new codecommit.Repository(this, 'ApplicationRepo', {
-            repositoryName: 'large-app-repository',
-            description: 'Application source code repository'
-        });
-
-        const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
-            buildSpec: codebuild.BuildSpec.fromObject({
-                version: '0.2',
-                phases: {
-                    pre_build: {
-                        commands: [
-                            'aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI',
-                            'COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)',
-                            'IMAGE_TAG=$${COMMIT_HASH:=latest}'
-                        ]
-                    },
-                    build: {
-                        commands: [
-                            'docker build -t $ECR_REPO_URI:$IMAGE_TAG .',
-                            'docker tag $ECR_REPO_URI:$IMAGE_TAG $ECR_REPO_URI:latest'
-                        ]
-                    },
-                    post_build: {
-                        commands: [
-                            'docker push $ECR_REPO_URI:$IMAGE_TAG',
-                            'docker push $ECR_REPO_URI:latest',
-                            'echo Writing image definitions file...',
-                            'printf \'{"ImageURI":"%s"}\' $ECR_REPO_URI:$IMAGE_TAG > imageDefinitions.json'
-                        ]
-                    }
-                },
-                artifacts: {
-                    files: ['imageDefinitions.json']
-                }
-            }),
             environment: {
-                buildImage: codebuild.LinuxBuildImage.STANDARD_5_0,
-                privileged: true,
-                environmentVariables: {
-                    ECR_REPO_URI: {
-                        value: mainContainer.containerName
-                    }
-                }
+                DATABASE_HOST: database.clusterEndpoint.hostname,
+                DATABASE_PORT: database.clusterEndpoint.port.toString(),
+                DATABASE_NAME: 'appdb',
+                RAILS_ENV: 'production',
+                REDIS_URL: redisCluster.attrConfigurationEndPointAddress,
+                REDIS_PORT: redisCluster.attrConfigurationEndPointPort,
             },
-            logging: {
-                cloudWatch: {
-                    enabled: true,
-                    logGroup: new logs.LogGroup(this, 'BuildLogGroup', {
-                        logGroupName: '/codebuild/app-build',
-                        retention: logs.RetentionDays.ONE_MONTH,
-                        removalPolicy: cdk.RemovalPolicy.DESTROY
-                    })
-                }
-            }
+            logging: new ecs.AwsLogDriver({
+                streamPrefix: 'main-app',
+                logRetention: logs.RetentionDays.ONE_MONTH,
+            }),
         });
 
-        const pipeline = new codepipeline.Pipeline(this, 'DeploymentPipeline', {
-            pipelineName: 'LargeAppPipeline',
-            crossAccountKeys: false,
-            restartExecutionOnUpdate: true
+        const apiContainer = apiTaskDef.addContainer('ApiContainer', {
+            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
+            secrets: {
+                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret, 'authToken'),
+            },
+            environment: {
+                DATABASE_HOST: database.clusterEndpoint.hostname,
+                DATABASE_PORT: database.clusterEndpoint.port.toString(),
+                DATABASE_NAME: 'appdb',
+                RAILS_ENV: 'production',
+                REDIS_URL: redisCluster.attrConfigurationEndPointAddress,
+                REDIS_PORT: redisCluster.attrConfigurationEndPointPort,
+            },
+            logging: new ecs.AwsLogDriver({
+                streamPrefix: 'api',
+                logRetention: logs.RetentionDays.ONE_MONTH,
+            }),
         });
 
-        pipeline.addStage({
-            stageName: 'Source',
-            actions: [
-                new codepipeline_actions.CodeCommitSourceAction({
-                    actionName: 'CodeCommit_Source',
-                    repository: repository,
-                    branch: 'main',
-                    output: new codepipeline.Artifact('SourceOutput')
-                })
-            ]
+        mainContainer.addPortMappings({
+            containerPort: 80,
+            protocol: ecs.Protocol.TCP,
+        });
+        apiContainer.addPortMappings({
+            containerPort: 8080,
+            protocol: ecs.Protocol.TCP,
         });
 
-        pipeline.addStage({
-            stageName: 'Build',
-            actions: [
-                new codepipeline_actions.CodeBuildAction({
-                    actionName: 'Build',
-                    project: buildProject,
-                    input: new codepipeline.Artifact('SourceOutput'),
-                    outputs: [new codepipeline.Artifact('BuildOutput')]
-                })
-            ]
+        // メインアプリケーションのECSサービス
+        const mainAppService = new ecs.FargateService(this, 'MainAppService', {
+            cluster,
+            taskDefinition: mainAppTaskDef,
+            desiredCount: 3,
+            minHealthyPercent: 50,
+            maxHealthyPercent: 200,
+            healthCheckGracePeriod: Duration.seconds(60),
+            platformVersion: ecs.FargatePlatformVersion.VERSION1_4,
+            enableExecuteCommand: true,
         });
 
-        pipeline.addStage({
-            stageName: 'Deploy',
-            actions: [
-                new codepipeline_actions.EcsDeployAction({
-                    actionName: 'Deploy_to_ECS',
-                    service: mainAppService,
-                    input: new codepipeline.Artifact('BuildOutput')
-                })
-            ]
+        // APIサービスのECSサービス
+        const apiService = new ecs.FargateService(this, 'ApiService', {
+            cluster,
+            taskDefinition: apiTaskDef,
+            desiredCount: 3,
+            minHealthyPercent: 50,
+            maxHealthyPercent: 200,
+            healthCheckGracePeriod: Duration.seconds(60),
+            platformVersion: ecs.FargatePlatformVersion.VERSION1_4,
+            enableExecuteCommand: true,
         });
+
+        // RedisへのアクセスをFargateサービスに許可
+        redisSecurityGroup.addIngressRule(
+            mainAppService.connections.securityGroups[0],
+            ec2.Port.tcp(6379),
+            'Allow from main Fargate service'
+        );
+
+        redisSecurityGroup.addIngressRule(
+            apiService.connections.securityGroups[0],
+            ec2.Port.tcp(6379),
+            'Allow from API Fargate service'
+        );
 
         // CDK Outputs
         new cdk.CfnOutput(this, 'VpcId', {
@@ -614,20 +308,20 @@ export class InfraLargeStack extends InfrastructureStack {
 
         new cdk.CfnOutput(this, 'RedisEndpoint', {
             value: redisCluster.attrConfigurationEndPointAddress,
-            description: 'Redis endpoint',
+            description: 'Redis configuration endpoint',
             exportName: `${this.projectPrefix}-${this.envName}-redis-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisPort', {
+            value: redisCluster.attrConfigurationEndPointPort,
+            description: 'Redis port',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-port`,
         });
 
         new cdk.CfnOutput(this, 'LoadBalancerDNS', {
             value: alb.loadBalancerDnsName,
             description: 'Application Load Balancer DNS',
             exportName: `${this.projectPrefix}-${this.envName}-alb-dns`,
-        });
-
-        new cdk.CfnOutput(this, 'CloudFrontDomain', {
-            value: distribution.distributionDomainName,
-            description: 'CloudFront Distribution Domain Name',
-            exportName: `${this.projectPrefix}-${this.envName}-cloudfront-domain`,
         });
 
         new cdk.CfnOutput(this, 'BucketName', {
