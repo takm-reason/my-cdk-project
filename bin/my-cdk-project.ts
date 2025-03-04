@@ -1,49 +1,33 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { InfraSmallStack } from '../lib/infra-small';
-import { InfraMediumStack } from '../lib/infra-medium';
-import { InfraLargeStack } from '../lib/infra-large';
-import { InfraBaseStackProps } from '../lib/infra-base-stack';
+import { deployEnvironment } from '../lib/infra-environments';
 
 const app = new cdk.App();
 
-// コンテキストからプロジェクト情報を取得
-const projectName = app.node.tryGetContext('projectName') || 'MyProject';
-const infraSize = app.node.tryGetContext('infraSize') || 'small';
-const stackId = `${projectName}-Stack`;
+// コマンドライン引数から環境を取得
+const targetEnv = app.node.tryGetContext('env') || 'dev';
 
-// 共通のスタックプロパティ
-const stackProps: InfraBaseStackProps = {
-    env: {
-        account: process.env.CDK_DEFAULT_ACCOUNT,
-        region: process.env.CDK_DEFAULT_REGION
-    },
-    description: `Infrastructure stack for ${projectName} (${infraSize})`,
-    tags: {
-        ProjectName: projectName,
-        TemplateName: 'AWS-TypeScript-CDK-Template',
-        Environment: infraSize,
-        CreatedBy: 'CDK',
-        CreatedAt: new Date().toISOString()
-    },
-    // InfraBaseStackPropsで必要な追加プロパティ
-    projectName: projectName,
-    environment: infraSize
-};
+// 指定された環境のインフラをデプロイ
+deployEnvironment(app, targetEnv);
 
-// infraSizeに応じて適切なスタックを作成
-switch (infraSize.toLowerCase()) {
-    case 'medium':
-        new InfraMediumStack(app, stackId, stackProps);
-        break;
-    case 'large':
-        new InfraLargeStack(app, stackId, stackProps);
-        break;
-    case 'small':
-    default:
-        new InfraSmallStack(app, stackId, stackProps);
-        break;
-}
+// タグの追加
+const stackEnv = app.node.tryGetContext('infraSize') || 'small';
+cdk.Tags.of(app).add('Environment', targetEnv);
+cdk.Tags.of(app).add('InfraSize', stackEnv);
+cdk.Tags.of(app).add('CreatedBy', 'CDK');
+cdk.Tags.of(app).add('CreatedAt', new Date().toISOString());
+cdk.Tags.of(app).add('TemplateName', 'AWS-TypeScript-CDK-Template');
 
-app.synth();
+/* 使用例:
+ * 開発環境（small）:
+ * cdk deploy --context env=dev
+ * 
+ * ステージング環境（medium）:
+ * cdk deploy --context env=staging
+ * 
+ * 本番環境（規模を指定）:
+ * cdk deploy --context env=prod-small
+ * cdk deploy --context env=prod-medium
+ * cdk deploy --context env=prod-large
+ */
