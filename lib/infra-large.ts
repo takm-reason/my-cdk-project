@@ -268,6 +268,24 @@ export class InfraLargeStack extends InfrastructureStack {
             enableExecuteCommand: true,
         });
 
+        // Auto Scaling設定
+        const mainAppScaling = mainAppService.autoScaleTaskCount({
+            minCapacity: 3,
+            maxCapacity: 10,
+        });
+
+        mainAppScaling.scaleOnCpuUtilization('CpuScaling', {
+            targetUtilizationPercent: 70,
+            scaleInCooldown: Duration.seconds(60),
+            scaleOutCooldown: Duration.seconds(60),
+        });
+
+        mainAppScaling.scaleOnMemoryUtilization('MemoryScaling', {
+            targetUtilizationPercent: 70,
+            scaleInCooldown: Duration.seconds(60),
+            scaleOutCooldown: Duration.seconds(60),
+        });
+
         // APIサービスのECSサービス
         const apiService = new ecs.FargateService(this, 'ApiService', {
             cluster,
@@ -278,6 +296,99 @@ export class InfraLargeStack extends InfrastructureStack {
             healthCheckGracePeriod: Duration.seconds(60),
             platformVersion: ecs.FargatePlatformVersion.VERSION1_4,
             enableExecuteCommand: true,
+        });
+
+        // APIサービスのAuto Scaling設定
+        const apiScaling = apiService.autoScaleTaskCount({
+            minCapacity: 3,
+            maxCapacity: 10,
+        });
+
+        apiScaling.scaleOnCpuUtilization('ApiCpuScaling', {
+            targetUtilizationPercent: 70,
+            scaleInCooldown: Duration.seconds(60),
+            scaleOutCooldown: Duration.seconds(60),
+        });
+
+        apiScaling.scaleOnMemoryUtilization('ApiMemoryScaling', {
+            targetUtilizationPercent: 70,
+            scaleInCooldown: Duration.seconds(60),
+            scaleOutCooldown: Duration.seconds(60),
+        });
+
+        // セキュリティ機能の追加
+
+        // WAF v2の設定
+        const wafAcl = new wafv2.CfnWebACL(this, 'WAFv2ACL', {
+            defaultAction: { allow: {} },
+            scope: 'REGIONAL',
+            visibilityConfig: {
+                cloudWatchMetricsEnabled: true,
+                metricName: 'WAFv2MetricsForLargeEnv',
+                sampledRequestsEnabled: true,
+            },
+            rules: [
+                {
+                    name: 'RateLimit',
+                    priority: 1,
+                    action: { block: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'RateLimitRule',
+                        sampledRequestsEnabled: true,
+                    },
+                    statement: {
+                        rateBasedStatement: {
+                            aggregateKeyType: 'IP',
+                            limit: 2000,
+                        },
+                    },
+                },
+                {
+                    name: 'SQLInjectionRule',
+                    priority: 2,
+                    overrideAction: { none: {} },
+                    statement: {
+                        managedRuleGroupStatement: {
+                            name: 'AWSManagedRulesSQLiRuleSet',
+                            vendorName: 'AWS',
+                        },
+                    },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'SQLInjectionRule',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+                {
+                    name: 'CommonRuleSet',
+                    priority: 3,
+                    overrideAction: { none: {} },
+                    statement: {
+                        managedRuleGroupStatement: {
+                            name: 'AWSManagedRulesCommonRuleSet',
+                            vendorName: 'AWS',
+                        },
+                    },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'CommonRuleSet',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+            ],
+        });
+
+        // WAFをALBに関連付け
+        new wafv2.CfnWebACLAssociation(this, 'WebACLAssociation', {
+            resourceArn: alb.loadBalancerArn,
+            webAclArn: wafAcl.attrArn,
+        });
+
+        // Shield Advancedの保護
+        new shield.CfnProtection(this, 'ShieldProtection', {
+            name: `${this.projectPrefix}-${this.envName}-shield-protection`,
+            resourceArn: alb.loadBalancerArn,
         });
 
         // RedisへのアクセスをFargateサービスに許可

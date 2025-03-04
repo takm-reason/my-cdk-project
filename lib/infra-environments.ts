@@ -1,4 +1,5 @@
 import { App } from 'aws-cdk-lib';
+import { InfraDevStack } from './infra-dev';
 import { InfraSmallStack } from './infra-small';
 import { InfraMediumStack } from './infra-medium';
 import { InfraLargeStack } from './infra-large';
@@ -72,6 +73,12 @@ export function deployEnvironment(app: App, envName: string) {
         environment: config.environment,
     };
 
+    // 開発環境の場合は専用のスタックを使用
+    if (config.environment === 'development') {
+        return new InfraDevStack(app, `${config.projectName}-${config.envName}`, stackProps);
+    }
+
+    // その他の環境はサイズに応じたスタックを使用
     switch (config.infraSize) {
         case 'small':
             return new InfraSmallStack(app, `${config.projectName}-${config.envName}`, stackProps);

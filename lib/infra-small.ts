@@ -71,8 +71,8 @@ export class InfraSmallStack extends InfrastructureStack {
             maxAllocatedStorage: 30,
             databaseName: 'appdb',
             multiAz: false,
-            deletionProtection: false, // 開発環境なのでfalse
-            removalPolicy: RemovalPolicy.DESTROY, // 開発環境なのでDESTROY
+            deletionProtection: true, // 小規模本番環境なのでtrue
+            removalPolicy: RemovalPolicy.RETAIN, // 小規模本番環境なのでRETAIN
             backupRetention: cdk.Duration.days(7),
         });
 
@@ -127,7 +127,7 @@ export class InfraSmallStack extends InfrastructureStack {
                 DATABASE_HOST: database.instanceEndpoint.hostname,
                 DATABASE_PORT: database.instanceEndpoint.port.toString(),
                 DATABASE_NAME: 'appdb',
-                RAILS_ENV: 'development', // 開発環境なのでdevelopment
+                RAILS_ENV: 'production', // 小規模本番環境なのでproduction
                 REDIS_URL: redis.attrPrimaryEndPointAddress,
                 REDIS_PORT: redis.attrPrimaryEndPointPort,
             },
