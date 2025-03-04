@@ -20,21 +20,15 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { InfrastructureStack, InfraBaseStackProps } from './infra-base-stack';
 
-export class InfraLargeStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+export class InfraLargeStack extends InfrastructureStack {
+    constructor(scope: Construct, id: string, props: InfraBaseStackProps) {
         super(scope, id, props);
-
-        // プロジェクト名と環境名を取得
-        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
-        const environment = 'large';
-
-        // ランダムなサフィックスを生成（8文字）
-        const suffix = Math.random().toString(36).substring(2, 10);
 
         // S3バケットの作成
         const bucket = new s3.Bucket(this, 'StorageBucket', {
-            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            bucketName: `${this.projectPrefix.toLowerCase()}-${this.envName}-${this.resourceSuffix}`,
             encryption: s3.BucketEncryption.S3_MANAGED,
             versioned: true,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -108,7 +102,8 @@ export class InfraLargeStack extends cdk.Stack {
             engine: rds.DatabaseClusterEngine.auroraMysql({
                 version: rds.AuroraMysqlEngineVersion.VER_3_04_0
             }),
-            instances: 3, // メイン + 2つのRead Replica
+            credentials: rds.Credentials.fromSecret(this.databaseSecret),
+            instances: 3,
             instanceProps: {
                 vpc,
                 instanceType: ec2.InstanceType.of(ec2.InstanceClass.R6G, ec2.InstanceSize.LARGE),
@@ -154,7 +149,7 @@ export class InfraLargeStack extends cdk.Stack {
         const httpsListener = alb.addListener('HttpsListener', {
             port: 443,
             certificates: [new acm.Certificate(this, 'Certificate', {
-                domainName: 'example.com', // 実際のドメイン名に置き換えてください
+                domainName: 'example.com',
             })],
         });
 
@@ -163,17 +158,68 @@ export class InfraLargeStack extends cdk.Stack {
             port: 8443,
             protocol: elbv2.ApplicationProtocol.HTTPS,
             certificates: [new acm.Certificate(this, 'ApiCertificate', {
-                domainName: 'api.example.com', // 実際のドメイン名に置き換えてください
+                domainName: 'api.example.com',
             })],
         });
+
+        // メインアプリケーションのタスク定義
+        const mainAppTaskDef = new ecs.FargateTaskDefinition(this, 'MainAppTask', {
+            cpu: 1024,
+            memoryLimitMiB: 2048,
+        });
+
+        // APIサービスのタスク定義
+        const apiTaskDef = new ecs.FargateTaskDefinition(this, 'ApiTask', {
+            cpu: 1024,
+            memoryLimitMiB: 2048,
+        });
+
+        // コンテナの環境変数とシークレットの設定
+        const mainContainer = mainAppTaskDef.addContainer('MainAppContainer', {
+            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
+            secrets: {
+                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
+            },
+            environment: {
+                DATABASE_HOST: database.clusterEndpoint.hostname,
+                DATABASE_PORT: database.clusterEndpoint.port.toString(),
+                DATABASE_NAME: 'appdb',
+                RAILS_ENV: 'production',
+            },
+            logging: new ecs.AwsLogDriver({
+                streamPrefix: 'main-app',
+                logRetention: logs.RetentionDays.ONE_MONTH,
+            }),
+        });
+
+        const apiContainer = apiTaskDef.addContainer('ApiContainer', {
+            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
+            secrets: {
+                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
+            },
+            environment: {
+                DATABASE_HOST: database.clusterEndpoint.hostname,
+                DATABASE_PORT: database.clusterEndpoint.port.toString(),
+                DATABASE_NAME: 'appdb',
+                RAILS_ENV: 'production',
+            },
+            logging: new ecs.AwsLogDriver({
+                streamPrefix: 'api',
+                logRetention: logs.RetentionDays.ONE_MONTH,
+            }),
+        });
+
+        mainContainer.addPortMappings({ containerPort: 80 });
+        apiContainer.addPortMappings({ containerPort: 8080 });
 
         // メインアプリケーションのECSサービス
         const mainAppService = new ecs.FargateService(this, 'MainAppService', {
             cluster,
-            taskDefinition: new ecs.FargateTaskDefinition(this, 'MainAppTask', {
-                cpu: 1024,
-                memoryLimitMiB: 2048,
-            }),
+            taskDefinition: mainAppTaskDef,
             desiredCount: 3,
             minHealthyPercent: 50,
             maxHealthyPercent: 200,
@@ -185,10 +231,7 @@ export class InfraLargeStack extends cdk.Stack {
         // APIサービスのECSサービス
         const apiService = new ecs.FargateService(this, 'ApiService', {
             cluster,
-            taskDefinition: new ecs.FargateTaskDefinition(this, 'ApiTask', {
-                cpu: 1024,
-                memoryLimitMiB: 2048,
-            }),
+            taskDefinition: apiTaskDef,
             desiredCount: 3,
             minHealthyPercent: 50,
             maxHealthyPercent: 200,
@@ -307,6 +350,7 @@ export class InfraLargeStack extends cdk.Stack {
             autoMinorVersionUpgrade: true,
             atRestEncryptionEnabled: true,
             transitEncryptionEnabled: true,
+            authToken: this.getRedisSecretValue(),
         });
 
         // WAF（高度な設定）
@@ -420,6 +464,15 @@ export class InfraLargeStack extends cdk.Stack {
             priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
             webAclId: wafAcl.attrArn,
             enableLogging: true,
+            logBucket: new s3.Bucket(this, 'CloudFrontLogsBucket', {
+                encryption: s3.BucketEncryption.S3_MANAGED,
+                removalPolicy: RemovalPolicy.RETAIN,
+                lifecycleRules: [
+                    {
+                        expiration: Duration.days(90),
+                    }
+                ]
+            }),
             errorResponses: [
                 {
                     httpStatus: 403,
@@ -448,74 +501,12 @@ export class InfraLargeStack extends cdk.Stack {
             }
         }));
 
-        // RedisへのアクセスをFargateサービスに許可
-        redisSecurityGroup.addIngressRule(
-            mainAppService.connections.securityGroups[0],
-            ec2.Port.tcp(6379),
-            'Allow from main Fargate service'
-        );
-        redisSecurityGroup.addIngressRule(
-            apiService.connections.securityGroups[0],
-            ec2.Port.tcp(6379),
-            'Allow from API Fargate service'
-        );
-
-        // 環境変数にRedisエンドポイントを追加
-        const mainAppTaskDef = mainAppService.taskDefinition;
-        const apiTaskDef = apiService.taskDefinition;
-
-        mainAppTaskDef.defaultContainer?.addEnvironment(
-            'REDIS_ENDPOINT',
-            redisCluster.attrConfigurationEndPointAddress
-        );
-        mainAppTaskDef.defaultContainer?.addEnvironment(
-            'REDIS_PORT',
-            redisCluster.attrConfigurationEndPointPort
-        );
-
-        apiTaskDef.defaultContainer?.addEnvironment(
-            'REDIS_ENDPOINT',
-            redisCluster.attrConfigurationEndPointAddress
-        );
-        apiTaskDef.defaultContainer?.addEnvironment(
-            'REDIS_PORT',
-            redisCluster.attrConfigurationEndPointPort
-        );
-
-        // CloudWatch Logs設定
-        const mainAppLogGroup = new logs.LogGroup(this, 'MainAppLogGroup', {
-            logGroupName: '/ecs/main-app',
-            retention: logs.RetentionDays.ONE_MONTH,
-            removalPolicy: cdk.RemovalPolicy.DESTROY
-        });
-
-        const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
-            logGroupName: '/ecs/api',
-            retention: logs.RetentionDays.ONE_MONTH,
-            removalPolicy: cdk.RemovalPolicy.DESTROY
-        });
-
-        // SSMパラメータストアの設定
-        const appConfig = new ssm.StringParameter(this, 'AppConfig', {
-            parameterName: '/app/config',
-            stringValue: JSON.stringify({
-                environment: 'production',
-                apiEndpoint: apiListener.listenerArn,
-                databaseEndpoint: database.clusterEndpoint.hostname,
-                redisEndpoint: redisCluster.attrConfigurationEndPointAddress,
-            }),
-            description: 'Application configuration',
-            tier: ssm.ParameterTier.STANDARD,
-            type: ssm.ParameterType.STRING
-        });
-
-        // アプリケーションリポジトリ
+        // CI/CDパイプライン関連のリソース
         const repository = new codecommit.Repository(this, 'ApplicationRepo', {
             repositoryName: 'large-app-repository',
             description: 'Application source code repository'
         });
 
-        // CodeBuildプロジェクト
         const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
             buildSpec: codebuild.BuildSpec.fromObject({
                 version: '0.2',
@@ -551,7 +542,7 @@ export class InfraLargeStack extends cdk.Stack {
                 privileged: true,
                 environmentVariables: {
                     ECR_REPO_URI: {
-                        value: mainAppService.taskDefinition.defaultContainer?.containerName || ''
+                        value: mainContainer.containerName
                     }
                 }
             },
@@ -567,14 +558,12 @@ export class InfraLargeStack extends cdk.Stack {
             }
         });
 
-        // CI/CDパイプライン
         const pipeline = new codepipeline.Pipeline(this, 'DeploymentPipeline', {
             pipelineName: 'LargeAppPipeline',
             crossAccountKeys: false,
             restartExecutionOnUpdate: true
         });
 
-        // ソースステージ
         pipeline.addStage({
             stageName: 'Source',
             actions: [
@@ -587,7 +576,6 @@ export class InfraLargeStack extends cdk.Stack {
             ]
         });
 
-        // ビルドステージ
         pipeline.addStage({
             stageName: 'Build',
             actions: [
@@ -600,7 +588,6 @@ export class InfraLargeStack extends cdk.Stack {
             ]
         });
 
-        // デプロイステージ
         pipeline.addStage({
             stageName: 'Deploy',
             actions: [
@@ -612,19 +599,41 @@ export class InfraLargeStack extends cdk.Stack {
             ]
         });
 
-        // パイプラインのCloudWatchアラーム
-        new cdk.aws_cloudwatch.Alarm(this, 'PipelineFailureAlarm', {
-            metric: new cdk.aws_cloudwatch.Metric({
-                namespace: 'AWS/CodePipeline',
-                metricName: 'FailedPipeline',
-                dimensionsMap: {
-                    PipelineName: pipeline.pipelineName
-                }
-            }),
-            threshold: 1,
-            evaluationPeriods: 1,
-            comparisonOperator: cdk.aws_cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            treatMissingData: cdk.aws_cloudwatch.TreatMissingData.NOT_BREACHING
+        // CDK Outputs
+        new cdk.CfnOutput(this, 'VpcId', {
+            value: vpc.vpcId,
+            description: 'VPC ID',
+            exportName: `${this.projectPrefix}-${this.envName}-vpc-id`,
+        });
+
+        new cdk.CfnOutput(this, 'DatabaseEndpoint', {
+            value: database.clusterEndpoint.hostname,
+            description: 'Database endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-db-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisEndpoint', {
+            value: redisCluster.attrConfigurationEndPointAddress,
+            description: 'Redis endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+            value: alb.loadBalancerDnsName,
+            description: 'Application Load Balancer DNS',
+            exportName: `${this.projectPrefix}-${this.envName}-alb-dns`,
+        });
+
+        new cdk.CfnOutput(this, 'CloudFrontDomain', {
+            value: distribution.distributionDomainName,
+            description: 'CloudFront Distribution Domain Name',
+            exportName: `${this.projectPrefix}-${this.envName}-cloudfront-domain`,
+        });
+
+        new cdk.CfnOutput(this, 'BucketName', {
+            value: bucket.bucketName,
+            description: 'S3 Bucket Name',
+            exportName: `${this.projectPrefix}-${this.envName}-bucket-name`,
         });
     }
 }

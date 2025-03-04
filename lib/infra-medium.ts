@@ -15,20 +15,15 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-export class InfraMediumStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+import { InfrastructureStack, InfraBaseStackProps } from './infra-base-stack';
+
+export class InfraMediumStack extends InfrastructureStack {
+    constructor(scope: Construct, id: string, props: InfraBaseStackProps) {
         super(scope, id, props);
-
-        // プロジェクト名と環境名を取得
-        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
-        const environment = 'medium';
-
-        // ランダムなサフィックスを生成（8文字）
-        const suffix = Math.random().toString(36).substring(2, 10);
 
         // S3バケットの作成
         const bucket = new s3.Bucket(this, 'StorageBucket', {
-            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            bucketName: `${this.projectPrefix.toLowerCase()}-${this.envName}-${this.resourceSuffix}`,
             encryption: s3.BucketEncryption.S3_MANAGED,
             versioned: true,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -64,7 +59,6 @@ export class InfraMediumStack extends cdk.Stack {
         });
 
         // Medium環境用のVPC設定
-        // Medium環境用のVPC設定
         const vpc = new ec2.Vpc(this, 'MediumVPC', {
             maxAzs: 2,
             subnetConfiguration: [
@@ -91,31 +85,32 @@ export class InfraMediumStack extends cdk.Stack {
             engine: rds.DatabaseClusterEngine.auroraMysql({
                 version: rds.AuroraMysqlEngineVersion.VER_3_04_0
             }),
+            credentials: rds.Credentials.fromSecret(this.databaseSecret),
             vpc,
             vpcSubnets: {
                 subnetType: ec2.SubnetType.PRIVATE_ISOLATED
             },
-            serverlessV2MinCapacity: 0.5, // 最小0.5 ACU
-            serverlessV2MaxCapacity: 4.0,  // 最大4.0 ACU
+            serverlessV2MinCapacity: 0.5,
+            serverlessV2MaxCapacity: 4.0,
             writer: rds.ClusterInstance.serverlessV2('writer', {
                 autoMinorVersionUpgrade: true,
                 enablePerformanceInsights: true,
-                performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT, // 7日間
+                performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
             }),
             readers: [
                 rds.ClusterInstance.serverlessV2('reader1', {
                     autoMinorVersionUpgrade: true,
                     enablePerformanceInsights: true,
                     performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
-                    scaleWithWriter: true, // ライターと同じスケーリング設定を使用
+                    scaleWithWriter: true,
                 })
             ],
             backup: {
-                retention: Duration.days(14), // バックアップ保持期間
-                preferredWindow: '03:00-04:00', // JST 12:00-13:00
+                retention: Duration.days(14),
+                preferredWindow: '03:00-04:00',
             },
-            cloudwatchLogsExports: ['error', 'general', 'slowquery'], // ログエクスポートの有効化
-            monitoringInterval: Duration.seconds(30), // 拡張モニタリングの有効化
+            cloudwatchLogsExports: ['error', 'general', 'slowquery'],
+            monitoringInterval: Duration.seconds(30),
             defaultDatabaseName: 'appdb',
         });
 
@@ -132,12 +127,18 @@ export class InfraMediumStack extends cdk.Stack {
             memoryLimitMiB: 1024,
             desiredCount: 2,
             taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('nginx:latest'), // デモ用のイメージ
+                image: ecs.ContainerImage.fromRegistry('nginx:latest'),
                 containerPort: 80,
+                secrets: {
+                    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
+                },
                 environment: {
                     DATABASE_HOST: database.clusterEndpoint.hostname,
                     DATABASE_PORT: database.clusterEndpoint.port.toString(),
                     DATABASE_NAME: 'appdb',
+                    RAILS_ENV: 'production',
                 },
             },
             publicLoadBalancer: true,
@@ -149,14 +150,12 @@ export class InfraMediumStack extends cdk.Stack {
             maxCapacity: 8,
         });
 
-        // CPU使用率に基づくスケーリング
         scaling.scaleOnCpuUtilization('CpuScaling', {
             targetUtilizationPercent: 70,
             scaleInCooldown: Duration.seconds(60),
             scaleOutCooldown: Duration.seconds(60),
         });
 
-        // リクエスト数に基づくスケーリング
         scaling.scaleOnRequestCount('RequestScaling', {
             requestsPerTarget: 1000,
             targetGroup: fargateService.targetGroup,
@@ -183,15 +182,19 @@ export class InfraMediumStack extends cdk.Stack {
             allowAllOutbound: true,
         });
 
-        const redis = new elasticache.CfnCacheCluster(this, 'MediumRedis', {
+        const redis = new elasticache.CfnReplicationGroup(this, 'MediumRedis', {
+            replicationGroupDescription: 'Redis cluster for medium environment',
             engine: 'redis',
             cacheNodeType: 'cache.t3.medium',
-            numCacheNodes: 1,
-            vpcSecurityGroupIds: [redisSecurityGroup.securityGroupId],
+            numCacheClusters: 1,
+            securityGroupIds: [redisSecurityGroup.securityGroupId],
             cacheSubnetGroupName: redisSubnetGroup.ref,
             engineVersion: '7.0',
             preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
             autoMinorVersionUpgrade: true,
+            transitEncryptionEnabled: true,
+            atRestEncryptionEnabled: true,
+            authToken: this.getRedisSecretValue(),
         });
 
         // WAFの設定
@@ -239,22 +242,20 @@ export class InfraMediumStack extends cdk.Stack {
             ],
         });
 
-        // カスタムドメインの設定（オプション）
+        // カスタムドメインの設定
         const domainName = this.node.tryGetContext('domainName');
         const useCustomDomain = this.node.tryGetContext('useCustomDomain') === 'true';
 
         let certificate;
         if (useCustomDomain && domainName) {
-            // Route53のホストゾーンを参照
             const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
                 domainName
             });
 
-            // CloudFront用のACM証明書（us-east-1リージョンに作成）
             certificate = new acm.DnsValidatedCertificate(this, 'CloudFrontCertificate', {
                 domainName: `*.${domainName}`,
                 hostedZone,
-                region: 'us-east-1', // CloudFront用の証明書はus-east-1に作成する必要がある
+                region: 'us-east-1',
                 validation: acm.CertificateValidation.fromDns(hostedZone),
             });
         }
@@ -269,7 +270,7 @@ export class InfraMediumStack extends cdk.Stack {
                 cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
             },
-            domainNames: useCustomDomain && domainName ? [`${environment}.${domainName}`] : undefined,
+            domainNames: useCustomDomain && domainName ? [`${this.envName}.${domainName}`] : undefined,
             certificate: useCustomDomain && certificate ? certificate : undefined,
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
             webAclId: wafAcl.attrArn,
@@ -285,7 +286,7 @@ export class InfraMediumStack extends cdk.Stack {
             }),
         });
 
-        // Route53 DNSレコードの作成（カスタムドメインが設定されている場合）
+        // Route53 DNSレコードの作成
         if (useCustomDomain && domainName) {
             const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
                 domainName
@@ -296,7 +297,7 @@ export class InfraMediumStack extends cdk.Stack {
                 target: route53.RecordTarget.fromAlias(
                     new targets.CloudFrontTarget(distribution)
                 ),
-                recordName: `${environment}.${domainName}`,
+                recordName: `${this.envName}.${domainName}`,
             });
         }
 
@@ -319,14 +320,47 @@ export class InfraMediumStack extends cdk.Stack {
             'Allow from Fargate service'
         );
 
-        // 環境変数にRedisエンドポイントを追加
-        fargateService.taskDefinition.defaultContainer?.addEnvironment(
-            'REDIS_ENDPOINT',
-            redis.attrRedisEndpointAddress
-        );
-        fargateService.taskDefinition.defaultContainer?.addEnvironment(
-            'REDIS_PORT',
-            redis.attrRedisEndpointPort
-        );
+        // CDK Outputs
+        new cdk.CfnOutput(this, 'VpcId', {
+            value: vpc.vpcId,
+            description: 'VPC ID',
+            exportName: `${this.projectPrefix}-${this.envName}-vpc-id`,
+        });
+
+        new cdk.CfnOutput(this, 'DatabaseEndpoint', {
+            value: database.clusterEndpoint.hostname,
+            description: 'Database endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-db-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisEndpoint', {
+            value: redis.attrPrimaryEndPointAddress,
+            description: 'Redis endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisPort', {
+            value: redis.attrPrimaryEndPointPort,
+            description: 'Redis port',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-port`,
+        });
+
+        new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+            value: fargateService.loadBalancer.loadBalancerDnsName,
+            description: 'Application Load Balancer DNS',
+            exportName: `${this.projectPrefix}-${this.envName}-alb-dns`,
+        });
+
+        new cdk.CfnOutput(this, 'CloudFrontDomain', {
+            value: distribution.distributionDomainName,
+            description: 'CloudFront Distribution Domain Name',
+            exportName: `${this.projectPrefix}-${this.envName}-cloudfront-domain`,
+        });
+
+        new cdk.CfnOutput(this, 'BucketName', {
+            value: bucket.bucketName,
+            description: 'S3 Bucket Name',
+            exportName: `${this.projectPrefix}-${this.envName}-bucket-name`,
+        });
     }
 }

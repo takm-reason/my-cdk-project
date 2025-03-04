@@ -4,16 +4,17 @@ import * as cdk from 'aws-cdk-lib';
 import { InfraSmallStack } from '../lib/infra-small';
 import { InfraMediumStack } from '../lib/infra-medium';
 import { InfraLargeStack } from '../lib/infra-large';
+import { InfraBaseStackProps } from '../lib/infra-base-stack';
 
 const app = new cdk.App();
 
-// スタックIDにプロジェクト名を含める
+// コンテキストからプロジェクト情報を取得
 const projectName = app.node.tryGetContext('projectName') || 'MyProject';
 const infraSize = app.node.tryGetContext('infraSize') || 'small';
 const stackId = `${projectName}-Stack`;
 
 // 共通のスタックプロパティ
-const stackProps: cdk.StackProps = {
+const stackProps: InfraBaseStackProps = {
     env: {
         account: process.env.CDK_DEFAULT_ACCOUNT,
         region: process.env.CDK_DEFAULT_REGION
@@ -25,7 +26,10 @@ const stackProps: cdk.StackProps = {
         Environment: infraSize,
         CreatedBy: 'CDK',
         CreatedAt: new Date().toISOString()
-    }
+    },
+    // InfraBaseStackPropsで必要な追加プロパティ
+    projectName: projectName,
+    environment: infraSize
 };
 
 // infraSizeに応じて適切なスタックを作成

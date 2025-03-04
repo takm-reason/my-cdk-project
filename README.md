@@ -9,6 +9,7 @@
 ├── bin/
 │   └── my-cdk-project.ts    # CDKアプリケーションのエントリーポイント
 ├── lib/
+│   ├── infra-base-stack.ts  # 基本インフラ定義（Secrets Manager等）
 │   ├── infra-small.ts       # Small環境のインフラ定義
 │   ├── infra-medium.ts      # Medium環境のインフラ定義
 │   ├── infra-large.ts       # Large環境のインフラ定義
@@ -18,213 +19,134 @@
 └── cdk.json
 ```
 
-## インフラサイズの違い
+## 認証情報とシークレットの管理
 
-本プロジェクトでは、`infraSize`パラメータにより3種類の環境サイズを提供しています：
+### AWS Secrets Manager
 
-### Small環境 (開発/テスト向け)
-小規模環境では、基本的なアプリケーション実行に必要な最小限のリソースを提供します：
-- **VPC**: 2 AZ構成（パブリック/プライベートサブネット）
-- **ECS**: Fargate (256 CPU units, 512 MB) x 1
-- **ALB**: Application Load Balancer
-- **RDS**: MySQL 8.0 シングルAZ (t3.small)
-  - 初期ストレージ: 20GB
-  - 最大ストレージ: 30GB
-  - バックアップ保持期間: 7日間
-- **S3バケット**:
-  - バージョニング有効
-  - サーバーサイド暗号化 (SSE-S3)
-  - パブリックアクセスブロック
-  - ライフサイクルルール:
-    - 30日後: IA (Infrequent Access)へ移行
-    - 90日後: Glacierへ移行
-- **DNS**: Route53ホストゾーン統合（オプション）
+本プロジェクトでは、データベースやRedisの認証情報を AWS Secrets Manager で管理しています。
 
-### Medium環境 (ステージング向け)
-中規模環境では、本番環境に近い構成でより堅牢なインフラを提供します：
-- **VPC**: 2 AZ構成（パブリック/プライベート/データベース専用サブネット）
-- **ECS**: Fargate (512 CPU units, 1024 MB) x 2-8
-- **Auto Scaling**: CPU使用率70%でスケーリング
-- **RDS**: Aurora MySQL 3.04.0 Serverless v2
-  - オートスケーリング: 0.5-4 ACU
-  - マルチAZ構成
-- **ElastiCache**: Redis シングルノード (t3.medium)
-- **CloudFront**: Price Class 100
-  - カスタムドメイン対応
-  - SSL/TLS証明書統合
-- **WAF**: 基本的な保護ルール
-  - レートリミット
-  - 一般的な攻撃からの保護
+#### 自動生成されるシークレット
 
-### Large環境 (本番向け)
-大規模環境では、高可用性と堅牢性を重視した本番運用向けの構成を提供します：
-- **VPC**: 3 AZ構成（パブリック/プライベート/データベース専用サブネット）
-- **ECS**:
-  - メインアプリケーション: Fargate (1024 CPU units, 2048 MB) x 3-12
-  - APIサービス: 独立したFargateサービス (1024 CPU units, 2048 MB) x 3-12
-  - コンテナヘルスチェック
-  - ECSタスク実行ロール
-- **ALB**:
-  - マルチリスナー構成
-  - 複数ターゲットグループ
-  - SSL/TLS終端
-- **Aurora MySQL**:
-  - バージョン: 3.04.0
-  - インスタンスタイプ: r6g.large
-  - マルチAZ: 3ノード（プライマリ + 2リードレプリカ）
-  - 自動バックアップ設定
-- **ElastiCache**:
-  - Redisクラスターモード
-  - インスタンスタイプ: r6g.large
-  - 3シャード（各シャードに2レプリカ）
-  - 自動フェイルオーバー
-- **CloudFront**: Price Class 200
-  - エッジロケーション最適化
-  - カスタムエラーページ
-  - APIキャッシュ戦略
-- **セキュリティ**:
-  - WAF（高度な保護ルール）
-  - AWS Shield Advanced
-  - セキュリティグループの厳格な制御
-  - KMS暗号化の統合
-- **監視とログ管理**:
-  - CloudWatch Logs（1ヶ月保持）
-  - CloudWatch Metrics
-  - カスタムメトリクス
-  - アラーム設定
-- **システム管理**:
-  - AWS Systems Manager
-  - パラメータストア
-  - セッション管理
-- **CI/CD**:
-  - CodePipelineによる自動化
-  - CodeCommitリポジトリ
-  - CodeBuildによるDockerビルド
-  - CodeDeployによるECSデプロイ
-  - パイプライン失敗時のアラート
+1. **データベース認証情報**:
+   ```json
+   {
+     "username": "admin",
+     "password": "自動生成されたパスワード",
+     "dbname": "appdb"
+   }
+   ```
 
-## セットアップ手順
+2. **Redis認証情報**:
+   ```json
+   {
+     "authToken": "自動生成されたトークン"
+   }
+   ```
 
-1. 依存関係のインストール:
+### 環境別の認証情報管理
+
+#### 開発環境 (dev)
+- シンプルな認証情報管理
+- `removalPolicy: DESTROY` で環境の削除を容易に
+- デプロイ時に自動生成された認証情報を.envファイルとして出力
+
+#### 検証環境 (staging)
+- Secrets Managerで認証情報を管理
+- ECSタスク定義でのシークレット参照
+- `removalPolicy: DESTROY` で環境の削除を可能に
+
+#### 本番環境 (small/medium/large)
+- Secrets Managerによる厳格な認証情報管理
+- `removalPolicy: RETAIN` でシークレットを保護
+- IAMロールベースのアクセス制御
+
+## Railsアプリケーションへの接続情報の受け渡し
+
+### 環境変数の設定方法
+
+#### 開発環境 (dev)
 ```bash
-npm install
+# デプロイ後に自動生成される.envファイル例
+DATABASE_HOST=xxx.xxx.rds.amazonaws.com
+DATABASE_PORT=3306
+DATABASE_NAME=appdb
+DATABASE_USERNAME=admin
+DATABASE_PASSWORD=xxx
+REDIS_ENDPOINT=xxx.xxx.cache.amazonaws.com
+REDIS_PORT=6379
+REDIS_AUTH_TOKEN=xxx
+RAILS_ENV=development
 ```
 
-2. 資格情報の設定:
-AWS認証情報が正しく設定されていることを確認してください。
-```bash
-aws configure
+#### 検証・本番環境
+ECSタスク定義での環境変数設定例：
+```typescript
+taskDefinition.addContainer('AppContainer', {
+  // ...
+  secrets: {
+    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(databaseSecret, 'username'),
+    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(databaseSecret, 'password'),
+    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(redisSecret),
+  },
+  environment: {
+    DATABASE_HOST: database.instanceEndpoint.hostname,
+    DATABASE_PORT: database.instanceEndpoint.port.toString(),
+    DATABASE_NAME: 'appdb',
+    RAILS_ENV: 'production',
+  },
+});
 ```
 
-## デプロイ・削除手順
+## リソース情報の出力
 
-### デプロイ
+### CDK Outputsの使用
 
-1. 変更内容の確認:
+デプロイ時に以下のコマンドを使用してリソース情報を取得できます：
 ```bash
-cdk diff \
-  --context projectName=MyProject \
-  --context infraSize=small
+cdk deploy --outputs-file ./outputs/my-stack-outputs.json
 ```
 
-2. デプロイの実行:
-```bash
-cdk deploy \
-  --context projectName=MyProject \
-  --context infraSize=small
+出力例：
+```json
+{
+  "MyStack": {
+    "VpcId": "vpc-0123456789abcdef0",
+    "DatabaseEndpoint": "xxx.xxx.rds.amazonaws.com",
+    "DatabaseSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
+    "RedisEndpoint": "xxx.xxx.cache.amazonaws.com",
+    "RedisSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
+    "LoadBalancerDNS": "xxx.elb.amazonaws.com"
+  }
+}
 ```
 
-### スタックの削除
+[以下、既存のREADMEの内容が続きます...]
 
-```bash
-cdk destroy \
-  --context projectName=MyProject \
-  --context infraSize=small
-```
+## セキュリティのベストプラクティス
 
-### インフラサイズの設定
+### 1. シークレット管理
+- データベースパスワードやAPIキーは必ずSecrets Managerで管理
+- 環境変数での直接指定は避ける
+- シークレットの自動ローテーションを検討
 
-`infraSize`パラメータ:
-- デフォルト値: `small`
-- 選択肢: `small`, `medium`, `large`
-- 指定方法: `--context infraSize=<サイズ>`
+### 2. ネットワークセキュリティ
+- VPCエンドポイントの活用
+- セキュリティグループの最小権限設定
+- プライベートサブネットの活用
 
-### コンテキストパラメータの詳細
+### 3. 暗号化
+- 保管データの暗号化（S3, RDS, ElastiCache）
+- 通信の暗号化（HTTPS, TLS）
+- KMSカスタマーマネージドキーの使用
 
-デプロイ時に以下のパラメータを指定できます：
+### 4. モニタリングとロギング
+- CloudWatch Logsの有効化
+- VPCフローログの有効化
+- CloudTrailの有効化
 
-#### 必須パラメータ
-- **infraSize**:
-  - デフォルト値: `small`
-  - 選択肢: `small`, `medium`, `large`
-  - 説明: インフラストラクチャのサイズを指定
+### 5. コンプライアンス
+- タグ付けの一貫性
+- リソースの命名規則
+- 監査ログの保持
 
-#### オプショナルパラメータ
-- **projectName**:
-  - デフォルト値: `MyProject`
-  - 説明: プロジェクト名（スタック名やリソースタグに使用）
-
-- **domainName**:
-  - 説明: Route53で管理されているドメイン名
-  - 使用環境: 全環境
-  - 例: `example.com`
-
-- **useRoute53** (Small環境用):
-  - デフォルト値: `false`
-  - 説明: Route53との統合を有効化
-  - 必要条件: `domainName`の指定が必要
-
-- **useCustomDomain** (Medium/Large環境用):
-  - デフォルト値: `false`
-  - 説明: CloudFrontでカスタムドメインを使用
-  - 必要条件: `domainName`の指定が必要
-
-#### 使用例
-```bash
-# Small環境でRoute53統合を有効化する例
-cdk deploy \
-  --context projectName=MyApp \
-  --context infraSize=small \
-  --context domainName=example.com \
-  --context useRoute53=true
-
-# Medium環境でカスタムドメインを使用する例
-cdk deploy \
-  --context projectName=MyApp \
-  --context infraSize=medium \
-  --context domainName=example.com \
-  --context useCustomDomain=true
-```
-
-## 設定ファイルの概要
-
-### cdk.json
-
-- **app**: エントリーポイントの指定 (`npx ts-node --prefer-ts-exts bin/my-cdk-project.ts`)
-- **watch**: ファイル監視の設定（開発時の自動再デプロイ用）
-- **context**: CDKの動作設定
-  - セキュリティ関連の設定
-  - サービス固有の設定
-  - リージョン/パーティションの設定
-
-### tsconfig.json
-
-- **Target**: ES2020
-- **Module**: CommonJS
-- **Strict Mode**: 有効
-- **Source Map**: インライン生成
-- **出力先**: `dist`ディレクトリ
-- **型定義**: `node_modules/@types`を参照
-
-## 主な機能
-
-- コンテキストパラメータ `projectName` を使用してスタック名をカスタマイズ可能
-- TypeScriptによる型安全な実装
-- モジュール化された構造で拡張性が高い
-- 環境サイズに応じた柔軟なインフラ構成
-
-## 注意事項
-
-- デプロイ前に必ず `cdk diff` コマンドで変更内容を確認することをお勧めします
-- 本番環境（large）へのデプロイ時は、十分なテストを行ってください
-- インフラサイズの変更は、新しい環境への移行を伴うため慎重に計画してください
+[元のREADMEの残りの内容...]

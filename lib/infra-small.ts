@@ -9,30 +9,24 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { InfrastructureStack, InfraBaseStackProps } from './infra-base-stack';
 
-export class InfraSmallStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+export class InfraSmallStack extends InfrastructureStack {
+    constructor(scope: Construct, id: string, props: InfraBaseStackProps) {
         super(scope, id, props);
 
-        // プロジェクト名と環境名を取得
-        const projectName = this.node.tryGetContext('projectName') || 'MyProject';
-        const environment = 'small';
         const domainName = this.node.tryGetContext('domainName');
         const useRoute53 = this.node.tryGetContext('useRoute53') === 'true';
 
-        // ランダムなサフィックスを生成（8文字）
-        const suffix = Math.random().toString(36).substring(2, 10);
-
         // S3バケットの作成
         const bucket = new s3.Bucket(this, 'StorageBucket', {
-            bucketName: `${projectName.toLowerCase()}-${environment}-${suffix}`,
+            bucketName: `${this.projectPrefix.toLowerCase()}-${this.envName}-${this.resourceSuffix}`,
             encryption: s3.BucketEncryption.S3_MANAGED,
             versioned: true,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             removalPolicy: RemovalPolicy.RETAIN,
             lifecycleRules: [
                 {
-                    // 有効期限は設定せず、ライフサイクルルールのみを適用
                     transitions: [
                         {
                             storageClass: s3.StorageClass.INFREQUENT_ACCESS,
@@ -70,12 +64,13 @@ export class InfraSmallStack extends cdk.Stack {
                 version: rds.MysqlEngineVersion.VER_8_0
             }),
             vpc,
+            credentials: rds.Credentials.fromSecret(this.databaseSecret),
             instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
             allocatedStorage: 20,
             maxAllocatedStorage: 30,
             databaseName: 'appdb',
             multiAz: false,
-            deletionProtection: false,
+            deletionProtection: true,
             backupRetention: cdk.Duration.days(7),
         });
 
@@ -92,18 +87,23 @@ export class InfraSmallStack extends cdk.Stack {
             memoryLimitMiB: 512,
             desiredCount: 1,
             taskImageOptions: {
-                image: ecs.ContainerImage.fromRegistry('nginx:latest'), // デモ用のイメージ
+                image: ecs.ContainerImage.fromRegistry('nginx:latest'),
                 containerPort: 80,
+                secrets: {
+                    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
+                },
                 environment: {
-                    // データベース接続情報など
                     DATABASE_HOST: database.instanceEndpoint.hostname,
                     DATABASE_PORT: database.instanceEndpoint.port.toString(),
                     DATABASE_NAME: 'appdb',
+                    RAILS_ENV: 'production',
                 },
             },
             publicLoadBalancer: true,
             minHealthyPercent: 50,
-            maxHealthyPercent: 100, // Auto Scalingを無効化（同時に実行できるタスク数を1に制限）
+            maxHealthyPercent: 100,
         });
 
         // RDSへのアクセスを許可
@@ -125,15 +125,19 @@ export class InfraSmallStack extends cdk.Stack {
             allowAllOutbound: true,
         });
 
-        const redis = new elasticache.CfnCacheCluster(this, 'SmallRedis', {
+        const redis = new elasticache.CfnReplicationGroup(this, 'SmallRedis', {
+            replicationGroupDescription: 'Redis cluster for small environment',
             engine: 'redis',
             cacheNodeType: 'cache.t3.medium',
-            numCacheNodes: 1,
-            vpcSecurityGroupIds: [redisSecurityGroup.securityGroupId],
+            numCacheClusters: 1,
+            securityGroupIds: [redisSecurityGroup.securityGroupId],
             cacheSubnetGroupName: redisSubnetGroup.ref,
             engineVersion: '7.0',
             preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
             autoMinorVersionUpgrade: true,
+            transitEncryptionEnabled: true,
+            atRestEncryptionEnabled: true,
+            authToken: this.getRedisSecretValue(),
         });
 
         // RedisへのアクセスをFargateサービスに許可
@@ -143,38 +147,62 @@ export class InfraSmallStack extends cdk.Stack {
             'Allow from Fargate service'
         );
 
-        // 環境変数にRedisエンドポイントを追加
-        fargateService.taskDefinition.defaultContainer?.addEnvironment(
-            'REDIS_ENDPOINT',
-            redis.attrRedisEndpointAddress
-        );
-        fargateService.taskDefinition.defaultContainer?.addEnvironment(
-            'REDIS_PORT',
-            redis.attrRedisEndpointPort
-        );
-
         // Route53統合（オプション）
         if (useRoute53 && domainName) {
-            // 既存のホストゾーンを参照
             const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
-                domainName: domainName
+                domainName
             });
 
-            // ALBのDNSレコードを作成
-            new route53.ARecord(this, 'ALBDnsRecord', {
+            const aRecord = new route53.ARecord(this, 'ALBDnsRecord', {
                 zone: hostedZone,
                 target: route53.RecordTarget.fromAlias(
                     new targets.LoadBalancerTarget(fargateService.loadBalancer)
                 ),
-                recordName: `${environment}.${domainName}`, // small.example.com
-                ttl: cdk.Duration.minutes(5),
+                recordName: `${this.envName}.${domainName}`,
             });
 
             // 環境変数にドメイン名を追加
             fargateService.taskDefinition.defaultContainer?.addEnvironment(
                 'DOMAIN_NAME',
-                `${environment}.${domainName}`
+                `${this.envName}.${domainName}`
             );
         }
+
+        // CDK Outputs
+        new cdk.CfnOutput(this, 'VpcId', {
+            value: vpc.vpcId,
+            description: 'VPC ID',
+            exportName: `${this.projectPrefix}-${this.envName}-vpc-id`,
+        });
+
+        new cdk.CfnOutput(this, 'DatabaseEndpoint', {
+            value: database.instanceEndpoint.hostname,
+            description: 'Database endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-db-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisEndpoint', {
+            value: redis.attrPrimaryEndPointAddress,
+            description: 'Redis endpoint',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-endpoint`,
+        });
+
+        new cdk.CfnOutput(this, 'RedisPort', {
+            value: redis.attrPrimaryEndPointPort,
+            description: 'Redis port',
+            exportName: `${this.projectPrefix}-${this.envName}-redis-port`,
+        });
+
+        new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+            value: fargateService.loadBalancer.loadBalancerDnsName,
+            description: 'Application Load Balancer DNS',
+            exportName: `${this.projectPrefix}-${this.envName}-alb-dns`,
+        });
+
+        new cdk.CfnOutput(this, 'BucketName', {
+            value: bucket.bucketName,
+            description: 'S3 Bucket Name',
+            exportName: `${this.projectPrefix}-${this.envName}-bucket-name`,
+        });
     }
 }
