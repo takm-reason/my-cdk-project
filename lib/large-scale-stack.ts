@@ -85,7 +85,16 @@ export class LargeScaleStack extends cdk.Stack {
         recorder.recordVpc(vpc, this.stackName);
 
         // Aurora Global Databaseの作成
-        const auroraCluster = new rds.DatabaseCluster(this, 'AuroraCluster', {
+        const globalCluster = new rds.CfnGlobalCluster(this, 'AuroraGlobalCluster', {
+            globalClusterIdentifier: `${props.projectName}-global-db`,
+            engineVersion: '15.2',
+            engine: 'aurora-postgresql',
+            storageEncrypted: true,
+            deletionProtection: true,
+        });
+
+        // プライマリクラスターの作成
+        const primaryCluster = new rds.DatabaseCluster(this, 'AuroraPrimaryCluster', {
             engine: rds.DatabaseClusterEngine.auroraPostgres({
                 version: rds.AuroraPostgresEngineVersion.VER_15_2,
             }),
@@ -105,11 +114,22 @@ export class LargeScaleStack extends cdk.Stack {
             storageEncrypted: true,
         });
 
+        // プライマリクラスターをグローバルクラスターに関連付け
+        const cfnDbCluster = primaryCluster.node.defaultChild as rds.CfnDBCluster;
+        cfnDbCluster.globalClusterIdentifier = globalCluster.ref;
+
+        // セカンダリリージョンのスタックを作成するためのパラメータを出力
+        new cdk.CfnOutput(this, 'GlobalClusterArn', {
+            value: globalCluster.ref,
+            description: 'Aurora Global Cluster ARN for secondary region stack',
+            exportName: 'AuroraGlobalClusterArn',
+        });
+
         // Auroraクラスターにタグを追加
-        cdk.Tags.of(auroraCluster).add('Name', `${props.projectName}-large-aurora`);
+        cdk.Tags.of(primaryCluster).add('Name', `${props.projectName}-large-aurora`);
 
         // Aurora情報の記録
-        recorder.recordRds(auroraCluster, this.stackName);
+        recorder.recordRds(primaryCluster, this.stackName);
 
         // ElastiCache (Redis) Clusterの作成
         const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
@@ -230,7 +250,7 @@ export class LargeScaleStack extends cdk.Stack {
             taskImageOptions: {
                 image: ecs.ContainerImage.fromRegistry('api-image:latest'),
                 environment: {
-                    DATABASE_URL: auroraCluster.clusterEndpoint.socketAddress,
+                    DATABASE_URL: primaryCluster.clusterEndpoint.socketAddress,
                     REDIS_URL: `redis://${redisCluster.attrConfigurationEndPointAddress}:${redisCluster.attrConfigurationEndPointPort}`,
                 },
                 logDriver: ecs.LogDrivers.awsLogs({
@@ -433,7 +453,7 @@ export class LargeScaleStack extends cdk.Stack {
         // Systems Manager Parameter Storeの設定
         const databaseUrlParam = new ssm.StringParameter(this, 'DatabaseUrl', {
             parameterName: '/prod/database/url',
-            stringValue: auroraCluster.clusterEndpoint.socketAddress,
+            stringValue: primaryCluster.clusterEndpoint.socketAddress,
         });
 
         const redisUrlParam = new ssm.StringParameter(this, 'RedisUrl', {

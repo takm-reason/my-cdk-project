@@ -81,20 +81,27 @@ export class MediumScaleStack extends cdk.Stack {
             engine: rds.DatabaseClusterEngine.auroraPostgres({
                 version: rds.AuroraPostgresEngineVersion.VER_15_2,
             }),
-            instances: 2,
-            instanceProps: {
-                instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
-                vpc,
-                vpcSubnets: {
-                    subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-                },
-            },
+            writer: rds.ClusterInstance.serverlessV2('Writer', {
+                autoMinorVersionUpgrade: true,
+            }),
+            readers: [
+                rds.ClusterInstance.serverlessV2('Reader1', {
+                    autoMinorVersionUpgrade: true,
+                    scaleWithWriter: true,
+                }),
+            ],
             serverlessV2MinCapacity: 0.5,
-            serverlessV2MaxCapacity: 2,
+            serverlessV2MaxCapacity: 16,
             vpc,
             vpcSubnets: {
                 subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
             },
+            backup: {
+                retention: cdk.Duration.days(14),
+                preferredWindow: '03:00-04:00',
+            },
+            storageEncrypted: true,
+            monitoringInterval: cdk.Duration.seconds(60),
         });
 
         // Auroraクラスターにタグを追加
