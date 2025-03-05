@@ -23,7 +23,7 @@
 - ElastiCache Redis
 - S3バケット
 - CloudFront
-- WAF
+- WAF（AWSマネージドルールによる基本的な保護）
 - ECS Fargate（Auto Scaling: 2-5台）
 
 ### 大規模構成（large）
@@ -32,7 +32,7 @@
 - ElastiCache Redisクラスター（マルチAZ）
 - S3バケット（インテリジェント階層化）
 - CloudFront + Shield Advanced
-- WAF（カスタムルール）
+- WAF（AWSマネージドルール + レートベースの制限）
 - ECS Fargate（API: 10-50台、Frontend: 10-30台）
 - CI/CDパイプライン
 - CloudWatchダッシュボード
