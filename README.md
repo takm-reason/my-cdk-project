@@ -45,34 +45,60 @@
 # 依存パッケージのインストール
 npm install
 
+# 開発依存パッケージの再インストール（クリーン）
+npm ci
+
 # AWS CDKの初期化（アカウントごとに初回のみ必要）
 cdk bootstrap
 ```
 
-### デプロイ作業
+### 開発作業
 
-#### 開発時の作業フロー
+#### TypeScript開発コマンド
+```bash
+# TypeScriptのビルド
+npm run build
+
+# 継続的なTypeScriptの監視とビルド
+npm run watch
+
+# テストの実行
+npm run test
+```
+
+#### デプロイ作業フロー
 ```bash
 # 1. スタックの変更内容確認
-cdk diff SmallScaleStack
+cdk diff <StackName> -c project=your-project
+
+例：
+cdk diff SmallScaleStack -c project=your-project
 
 # 2. ユニットテストの実行
 npm run test
 
-# 3. デプロイの実行
-cdk deploy SmallScaleStack
+# 3. デプロイの実行（基本形）
+cdk deploy <StackName> -c project=your-project
+
+# スケール別のスタック指定
+cdk deploy SmallScaleStack -c project=your-project    # 小規模構成
+cdk deploy MediumScaleStack -c project=your-project   # 中規模構成
+cdk deploy LargeScaleStack -c project=your-project    # 大規模構成
 ```
 
 #### 環境別のデプロイ
 ```bash
 # 開発環境へのデプロイ
-cdk deploy SmallScaleStack -c environment=dev
+cdk deploy SmallScaleStack -c project=your-project -c environment=dev
 
 # 本番環境へのデプロイ
-cdk deploy SmallScaleStack -c environment=prod
+cdk deploy SmallScaleStack -c project=your-project -c environment=prod
+
+# リージョン/アカウント指定デプロイ
+CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 cdk deploy SmallScaleStack -c project=your-project
 
 # 確認なしでデプロイ（CI/CD環境用）
-cdk deploy SmallScaleStack --require-approval never
+cdk deploy SmallScaleStack -c project=your-project --require-approval never
 ```
 
 ### 運用管理
@@ -95,10 +121,17 @@ cdk destroy SmallScaleStack
 cdk destroy SmallScaleStack --force
 ```
 
+**重要なパラメータ：**
+- `project`: プロジェクト名（必須、デフォルト値: default-project）
+- `environment`: 環境名（dev/prod）
+
 **注意事項：**
+- プロジェクト名は一意である必要があります
+- CloudFormationスタック名は`{プロジェクト名}-{スタック名}`の形式で生成されます
 - S3バケットは保持ポリシーが`RETAIN`に設定されているため、手動削除が必要
 - 削除前にS3バケット内のオブジェクトを空にする必要あり
 - RDSの自動バックアップは自動的に削除される設定
+- スケールの変更は新しいスタックとしてデプロイすることを推奨
 
 ### トラブルシューティング
 
@@ -111,7 +144,7 @@ npm ci
 cdk context --clear
 
 # CloudFormationスタックの状態確認
-aws cloudformation describe-stacks --stack-name SmallScaleStack
+aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 ```
 
 ## リソース情報の保存
