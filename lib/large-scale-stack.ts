@@ -20,6 +20,7 @@ import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as shield from 'aws-cdk-lib/aws-shield';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { ResourceRecorder } from './utils/resource-recorder';
+import { TagPolicyManager } from './utils/tag-policies';
 
 export interface LargeScaleStackProps extends cdk.StackProps {
     projectName: string;
@@ -31,6 +32,22 @@ export class LargeScaleStack extends cdk.Stack {
         super(scope, id, props);
 
         const recorder = new ResourceRecorder(props.projectName);
+
+        // タグポリシーマネージャーの初期化
+        const tagPolicyManager = new TagPolicyManager({
+            scope: this,
+            projectName: props.projectName,
+        });
+
+        // AWS Config ルールの作成
+        tagPolicyManager.createTagComplianceRule();
+
+        // Tag Policyテンプレートの生成（Organizations管理者に提供）
+        const tagPolicyTemplate = tagPolicyManager.generateTagPolicyTemplate();
+        new cdk.CfnOutput(this, 'TagPolicyTemplate', {
+            value: tagPolicyTemplate,
+            description: 'Organizations Tag Policyテンプレート',
+        });
 
         // スタック全体にタグを追加
         cdk.Tags.of(this).add('Project', props.projectName);
@@ -333,7 +350,7 @@ export class LargeScaleStack extends cdk.Stack {
         // Shield Advancedの保護
         const shieldProtection = new shield.CfnProtection(this, 'ShieldProtection', {
             name: 'LargeScaleProtection',
-            resourceArn: distribution.distributionArn,
+            resourceArn: `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
         });
 
         // Shieldにタグを追加

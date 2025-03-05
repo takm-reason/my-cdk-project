@@ -12,6 +12,7 @@ import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { ResourceRecorder } from './utils/resource-recorder';
+import { TagPolicyManager } from './utils/tag-policies';
 
 export interface MediumScaleStackProps extends cdk.StackProps {
     projectName: string;
@@ -23,6 +24,22 @@ export class MediumScaleStack extends cdk.Stack {
         super(scope, id, props);
 
         const recorder = new ResourceRecorder(props.projectName);
+
+        // タグポリシーマネージャーの初期化
+        const tagPolicyManager = new TagPolicyManager({
+            scope: this,
+            projectName: props.projectName,
+        });
+
+        // AWS Config ルールの作成
+        tagPolicyManager.createTagComplianceRule();
+
+        // Tag Policyテンプレートの生成（Organizations管理者に提供）
+        const tagPolicyTemplate = tagPolicyManager.generateTagPolicyTemplate();
+        new cdk.CfnOutput(this, 'TagPolicyTemplate', {
+            value: tagPolicyTemplate,
+            description: 'Organizations Tag Policyテンプレート',
+        });
 
         // スタック全体にタグを追加
         cdk.Tags.of(this).add('Project', props.projectName);
