@@ -89,10 +89,13 @@ cdk deploy LargeScaleStack -c project=your-project    # 大規模構成
 #### 環境別のデプロイ
 ```bash
 # 開発環境へのデプロイ
-cdk deploy SmallScaleStack -c project=your-project -c environment=dev
+cdk deploy SmallScaleStack -c project=your-project -c environment=development
+
+# ステージング環境へのデプロイ
+cdk deploy SmallScaleStack -c project=your-project -c environment=staging
 
 # 本番環境へのデプロイ
-cdk deploy SmallScaleStack -c project=your-project -c environment=prod
+cdk deploy SmallScaleStack -c project=your-project -c environment=production
 
 # リージョン/アカウント指定デプロイ
 CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 cdk deploy SmallScaleStack -c project=your-project
@@ -123,7 +126,7 @@ cdk destroy SmallScaleStack --force
 
 **重要なパラメータ：**
 - `project`: プロジェクト名（必須、デフォルト値: default-project）
-- `environment`: 環境名（dev/prod）
+- `environment`: 環境名（`production` / `staging` / `development`）
 
 **注意事項：**
 - プロジェクト名は一意である必要があります
