@@ -1,152 +1,160 @@
-# My CDK Project
+# AWS CDK Infrastructureプロジェクト
 
-このプロジェクトは AWS CDK v2 を使用した TypeScript プロジェクトのテンプレートです。
+このプロジェクトは、AWS CDKを使用して異なる規模のインフラストラクチャをコードとして管理するためのテンプレートです。
 
-## プロジェクト構成
+## 機能
 
-```
-.
-├── bin/
-│   └── my-cdk-project.ts    # CDKアプリケーションのエントリーポイント
-├── lib/
-│   ├── infra-base-stack.ts  # 基本インフラ定義（Secrets Manager等）
-│   ├── infra-small.ts       # Small環境のインフラ定義
-│   ├── infra-medium.ts      # Medium環境のインフラ定義
-│   ├── infra-large.ts       # Large環境のインフラ定義
-│   └── my-cdk-project-stack.ts    # メインのCDKスタック定義
-├── package.json
-├── tsconfig.json
-└── cdk.json
-```
+- 3つのスケール（小規模、中規模、大規模）に対応
+- リソース情報の自動記録
+- 統一的なタグ付け
+- プロジェクトごとの分離
 
-## 認証情報とシークレットの管理
+## スケール別の構成
 
-### AWS Secrets Manager
+### 小規模構成（small）
+- VPC（2 AZ、NAT Gateway x1）
+- RDS PostgreSQL（Single-AZ）
+- S3バケット
+- ECS Fargate（Auto Scaling: 1-2台）
 
-本プロジェクトでは、データベースやRedisの認証情報を AWS Secrets Manager で管理しています。
+### 中規模構成（medium）
+- VPC（3 AZ、NAT Gateway x2）
+- Aurora PostgreSQL Serverless v2
+- ElastiCache Redis
+- S3バケット
+- CloudFront
+- WAF
+- ECS Fargate（Auto Scaling: 2-5台）
 
-#### 自動生成されるシークレット
+### 大規模構成（large）
+- VPC（3 AZ、NAT Gateway x3）
+- Aurora PostgreSQL Global Database
+- ElastiCache Redisクラスター（マルチAZ）
+- S3バケット（インテリジェント階層化）
+- CloudFront + Shield Advanced
+- WAF（カスタムルール）
+- ECS Fargate（API: 10-50台、Frontend: 10-30台）
+- CI/CDパイプライン
+- CloudWatchダッシュボード
+- Systems Manager Parameter Store
 
-1. **データベース認証情報**:
-   ```json
-   {
-     "username": "admin",
-     "password": "自動生成されたパスワード",
-     "dbname": "appdb"
-   }
-   ```
+## 使用方法
 
-2. **Redis認証情報**:
-   ```json
-   {
-     "authToken": "自動生成されたトークン"
-   }
-   ```
-
-### 環境別の認証情報管理
-
-#### 開発環境 (dev)
-- シンプルな認証情報管理
-- `removalPolicy: DESTROY` で環境の削除を容易に
-- デプロイ時に自動生成された認証情報を.envファイルとして出力
-
-#### 検証環境 (staging)
-- Secrets Managerで認証情報を管理
-- ECSタスク定義でのシークレット参照
-- `removalPolicy: DESTROY` で環境の削除を可能に
-
-#### 本番環境 (small/medium/large)
-- Secrets Managerによる厳格な認証情報管理
-- `removalPolicy: RETAIN` でシークレットを保護
-- IAMロールベースのアクセス制御
-
-## Railsアプリケーションへの接続情報の受け渡し
-
-### 環境変数の設定方法
-
-#### 開発環境 (dev)
+### 初期セットアップ
 ```bash
-# デプロイ後に自動生成される.envファイル例
-DATABASE_HOST=xxx.xxx.rds.amazonaws.com
-DATABASE_PORT=3306
-DATABASE_NAME=appdb
-DATABASE_USERNAME=admin
-DATABASE_PASSWORD=xxx
-REDIS_ENDPOINT=xxx.xxx.cache.amazonaws.com
-REDIS_PORT=6379
-REDIS_AUTH_TOKEN=xxx
-RAILS_ENV=development
+# 依存パッケージのインストール
+npm install
+
+# AWS CDKの初期化（アカウントごとに初回のみ必要）
+cdk bootstrap
 ```
 
-#### 検証・本番環境
-ECSタスク定義での環境変数設定例：
-```typescript
-taskDefinition.addContainer('AppContainer', {
-  // ...
-  secrets: {
-    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(databaseSecret, 'username'),
-    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(databaseSecret, 'password'),
-    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(redisSecret),
-  },
-  environment: {
-    DATABASE_HOST: database.instanceEndpoint.hostname,
-    DATABASE_PORT: database.instanceEndpoint.port.toString(),
-    DATABASE_NAME: 'appdb',
-    RAILS_ENV: 'production',
-  },
-});
-```
+### デプロイ作業
 
-## リソース情報の出力
-
-### CDK Outputsの使用
-
-デプロイ時に以下のコマンドを使用してリソース情報を取得できます：
+#### 開発時の作業フロー
 ```bash
-cdk deploy --outputs-file ./outputs/my-stack-outputs.json
+# 1. スタックの変更内容確認
+cdk diff SmallScaleStack
+
+# 2. ユニットテストの実行
+npm run test
+
+# 3. デプロイの実行
+cdk deploy SmallScaleStack
 ```
 
-出力例：
-```json
-{
-  "MyStack": {
-    "VpcId": "vpc-0123456789abcdef0",
-    "DatabaseEndpoint": "xxx.xxx.rds.amazonaws.com",
-    "DatabaseSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
-    "RedisEndpoint": "xxx.xxx.cache.amazonaws.com",
-    "RedisSecretArn": "arn:aws:secretsmanager:region:account:secret:xxx",
-    "LoadBalancerDNS": "xxx.elb.amazonaws.com"
-  }
-}
+#### 環境別のデプロイ
+```bash
+# 開発環境へのデプロイ
+cdk deploy SmallScaleStack -c environment=dev
+
+# 本番環境へのデプロイ
+cdk deploy SmallScaleStack -c environment=prod
+
+# 確認なしでデプロイ（CI/CD環境用）
+cdk deploy SmallScaleStack --require-approval never
 ```
 
-[以下、既存のREADMEの内容が続きます...]
+### 運用管理
 
-## セキュリティのベストプラクティス
+#### リソース情報の確認
+```bash
+# スタックの出力値を確認
+cdk list-outputs SmallScaleStack
 
-### 1. シークレット管理
-- データベースパスワードやAPIキーは必ずSecrets Managerで管理
-- 環境変数での直接指定は避ける
-- シークレットの自動ローテーションを検討
+# 作成されたリソースの一覧を確認
+cdk list-resources SmallScaleStack
+```
 
-### 2. ネットワークセキュリティ
-- VPCエンドポイントの活用
-- セキュリティグループの最小権限設定
-- プライベートサブネットの活用
+#### スタックの削除
+```bash
+# スタックの削除（確認あり）
+cdk destroy SmallScaleStack
 
-### 3. 暗号化
-- 保管データの暗号化（S3, RDS, ElastiCache）
-- 通信の暗号化（HTTPS, TLS）
-- KMSカスタマーマネージドキーの使用
+# スタックの強制削除（確認なし）
+cdk destroy SmallScaleStack --force
+```
 
-### 4. モニタリングとロギング
-- CloudWatch Logsの有効化
-- VPCフローログの有効化
-- CloudTrailの有効化
+**注意事項：**
+- S3バケットは保持ポリシーが`RETAIN`に設定されているため、手動削除が必要
+- 削除前にS3バケット内のオブジェクトを空にする必要あり
+- RDSの自動バックアップは自動的に削除される設定
 
-### 5. コンプライアンス
-- タグ付けの一貫性
-- リソースの命名規則
-- 監査ログの保持
+### トラブルシューティング
 
-[元のREADMEの残りの内容...]
+#### よくある問題と解決方法
+```bash
+# 依存関係の再インストール
+npm ci
+
+# キャッシュのクリア
+cdk context --clear
+
+# CloudFormationスタックの状態確認
+aws cloudformation describe-stacks --stack-name SmallScaleStack
+```
+
+## リソース情報の保存
+
+デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
+- ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
+- 保存される情報：リソースARN、エンドポイント、設定値など
+
+## タグ付け
+
+すべてのリソースに以下のタグを付与します：
+
+- Project: プロジェクト名（デプロイ時指定）  
+- Environment: `production` / `staging` / `development` のみ  
+- CreatedBy: `terraform` / `cloudformation` / `cdk` / `manual` のみ  
+- CreatedAt: 作成日（YYYY-MM-DD）  
+
+## セキュリティ
+
+- すべてのデータベースは隔離されたサブネットに配置
+- すべてのS3バケットでSSL強制
+- WAFによるWebアプリケーション保護
+- 大規模構成ではShield Advancedによる追加保護
+
+## 監視
+
+- CloudWatchメトリクスによる自動監視
+- 大規模構成では包括的なダッシュボード
+- ECSコンテナインサイトの有効化
+- Auto Scalingメトリクスの監視
+
+## コスト最適化
+
+- 小規模：最小限のリソースで運用
+- 中規模：Serverlessコンポーネントの活用
+- 大規模：インテリジェント階層化とキャパシティ最適化
+
+## 注意事項
+
+- プロジェクト名は一意である必要があります
+- 異なるスケール間での直接的な連携は想定していません
+- スケールの変更は新しいスタックとしてデプロイすることを推奨します
+
+## ライセンス
+
+このプロジェクトはMITライセンスの下で公開されています。
