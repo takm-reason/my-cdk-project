@@ -28,10 +28,7 @@ export class SmallScaleStack extends cdk.Stack {
             projectName: props.projectName,
         });
 
-        // AWS Config ルールの作成
-        tagPolicyManager.createTagComplianceRule();
-
-        // Tag Policyテンプレートの生成（Organizations管理者に提供）
+        // Tag Policyテンプレートの生成
         const tagPolicyTemplate = tagPolicyManager.generateTagPolicyTemplate();
         new cdk.CfnOutput(this, 'TagPolicyTemplate', {
             value: tagPolicyTemplate,
