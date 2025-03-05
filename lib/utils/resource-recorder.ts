@@ -171,8 +171,7 @@ export class ResourceRecorder {
                 serviceArn: service.service.serviceArn,
                 loadBalancerDns: service.loadBalancer.loadBalancerDnsName,
                 taskDefinitionArn: service.taskDefinition.taskDefinitionArn,
-                containerName: service.taskDefinition.defaultContainer?.containerName,
-                cpu: service.taskDefinition.cpu
+                containerName: service.taskDefinition.defaultContainer?.containerName
             }
         });
     }
@@ -221,8 +220,7 @@ export class ResourceRecorder {
             properties: {
                 stackName,
                 distributionId: distribution.distributionId,
-                domainName: distribution.distributionDomainName,
-                distributionArn: distribution.distributionArn
+                domainName: distribution.distributionDomainName
             }
         });
     }

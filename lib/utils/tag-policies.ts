@@ -10,17 +10,16 @@ export interface TagPolicyProps {
 export class TagPolicyManager {
     constructor(private readonly props: TagPolicyProps) { }
 
-    // AWS Config ルールを作成して必須タグをチェック
+    // タグポリシーを強制するためのAWS Configルールを作成
     public createTagComplianceRule(): void {
-        // カスタムルールのIAMロールを作成
-        const configRole = new iam.Role(this.props.scope, 'TagComplianceConfigRole', {
-            assumedBy: new iam.ServicePrincipal('config.amazonaws.com'),
-            managedPolicies: [
-                iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWS_ConfigRole'),
-            ],
-        });
+        // タグポリシーのテンプレートを生成
+        const tagPolicyTemplate = this.generateTagPolicyTemplate();
 
-        // 必須タグをチェックするAWS Configルールを作成
+        // タグポリシーのテンプレートを出力
+        new cdk.CfnOutput(this.props.scope, 'RequiredTagsPolicy', {
+            value: tagPolicyTemplate,
+            description: '必須タグのポリシーテンプレート'
+        });
         new config.ManagedRule(this.props.scope, 'RequiredTagsRule', {
             configRuleName: `${this.props.projectName}-required-tags`,
             description: '必須タグが設定されているかチェックするルール',
