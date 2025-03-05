@@ -28,8 +28,8 @@
 
 ### 大規模構成（large）
 - VPC（3 AZ、NAT Gateway x3）
-- Aurora PostgreSQL Global Database
-- ElastiCache Redisクラスター（マルチAZ）
+- Aurora PostgreSQL Global Database（セカンダリリージョンは別スタックとして実装）
+- ElastiCache Redisクラスター（3シャード × 2レプリカ/シャード、マルチAZ）
 - S3バケット（インテリジェント階層化）
 - CloudFront + Shield Advanced
 - WAF（AWSマネージドルール + レートベースの制限）
