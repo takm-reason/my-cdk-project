@@ -120,73 +120,31 @@ export class InfraMediumStack extends InfrastructureStack {
             enableFargateCapacityProviders: true,
         });
 
-        // ElastiCache (Redis)の設定
-        const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
-            subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }).subnetIds,
-            description: 'Subnet group for Redis cache',
-        });
-
-        const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
-            vpc,
-            description: 'Security group for Redis cache',
-            allowAllOutbound: true,
-        });
-
-        const redis = new elasticache.CfnReplicationGroup(this, 'MediumRedis', {
-            replicationGroupDescription: 'Redis cluster for medium environment',
-            engine: 'redis',
-            cacheNodeType: 'cache.t3.medium',
-            numCacheClusters: 2,
-            securityGroupIds: [redisSecurityGroup.securityGroupId],
-            cacheSubnetGroupName: redisSubnetGroup.ref,
-            engineVersion: '7.0',
-            preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
-            autoMinorVersionUpgrade: true,
-            transitEncryptionEnabled: true,
-            atRestEncryptionEnabled: true,
-            automaticFailoverEnabled: true,
-        });
-
-        // タスク定義の作成
-        const taskDefinition = new ecs.FargateTaskDefinition(this, 'MediumTaskDef', {
-            cpu: 512,
-            memoryLimitMiB: 1024,
-        });
-
-        // コンテナの追加
-        const container = taskDefinition.addContainer('AppContainer', {
-            image: ecs.ContainerImage.fromRegistry('nginx:latest'),
-            secrets: {
-                DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
-                DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
-                REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret, 'authToken'),
-            },
-            environment: {
-                DATABASE_HOST: database.clusterEndpoint.hostname,
-                DATABASE_PORT: database.clusterEndpoint.port.toString(),
-                DATABASE_NAME: 'appdb',
-                RAILS_ENV: 'production',
-                REDIS_URL: redis.attrPrimaryEndPointAddress,
-                REDIS_PORT: redis.attrPrimaryEndPointPort,
-            },
-        });
-
-        container.addPortMappings({
-            containerPort: 80,
-            protocol: ecs.Protocol.TCP,
-        });
-
         // ALBとECS Fargateサービスの統合
         const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'MediumService', {
             cluster,
-            taskDefinition,
+            cpu: 512,
+            memoryLimitMiB: 1024,
             desiredCount: 2,
+            taskImageOptions: {
+                image: ecs.ContainerImage.fromRegistry('nginx:latest'),
+                containerPort: 80,
+                secrets: {
+                    DATABASE_USERNAME: ecs.Secret.fromSecretsManager(this.databaseSecret, 'username'),
+                    DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(this.databaseSecret, 'password'),
+                    REDIS_AUTH_TOKEN: ecs.Secret.fromSecretsManager(this.redisSecret),
+                },
+                environment: {
+                    DATABASE_HOST: database.clusterEndpoint.hostname,
+                    DATABASE_PORT: database.clusterEndpoint.port.toString(),
+                    DATABASE_NAME: 'appdb',
+                    RAILS_ENV: 'production',
+                },
+            },
             publicLoadBalancer: true,
-            minHealthyPercent: 50,
-            maxHealthyPercent: 200,
         });
 
-        // Auto Scaling設定
+        // ECSサービスのAuto Scaling設定
         const scaling = fargateService.service.autoScaleTaskCount({
             minCapacity: 2,
             maxCapacity: 8,
@@ -212,33 +170,155 @@ export class InfraMediumStack extends InfrastructureStack {
             'Allow from Fargate service'
         );
 
+        // ElastiCache (Redis)の設定
+        const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
+            subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }).subnetIds,
+            description: 'Subnet group for Redis cache',
+        });
+
+        const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
+            vpc,
+            description: 'Security group for Redis cache',
+            allowAllOutbound: true,
+        });
+
+        const redis = new elasticache.CfnReplicationGroup(this, 'MediumRedis', {
+            replicationGroupDescription: 'Redis cluster for medium environment',
+            engine: 'redis',
+            cacheNodeType: 'cache.t3.medium',
+            numCacheClusters: 1,
+            securityGroupIds: [redisSecurityGroup.securityGroupId],
+            cacheSubnetGroupName: redisSubnetGroup.ref,
+            engineVersion: '7.0',
+            preferredMaintenanceWindow: 'sun:23:00-mon:01:30',
+            autoMinorVersionUpgrade: true,
+            transitEncryptionEnabled: true,
+            atRestEncryptionEnabled: true,
+            authToken: this.getRedisSecretValue(),
+        });
+
+        // WAFの設定
+        const wafAcl = new wafv2.CfnWebACL(this, 'MediumWAF', {
+            defaultAction: { allow: {} },
+            scope: 'CLOUDFRONT',
+            visibilityConfig: {
+                cloudWatchMetricsEnabled: true,
+                metricName: 'MediumWAFMetrics',
+                sampledRequestsEnabled: true,
+            },
+            rules: [
+                {
+                    name: 'RateLimit',
+                    priority: 1,
+                    statement: {
+                        rateBasedStatement: {
+                            limit: 2000,
+                            aggregateKeyType: 'IP',
+                        },
+                    },
+                    action: { block: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'RateLimitRule',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+                {
+                    name: 'AWSManagedRulesCommonRuleSet',
+                    priority: 2,
+                    statement: {
+                        managedRuleGroupStatement: {
+                            vendorName: 'AWS',
+                            name: 'AWSManagedRulesCommonRuleSet',
+                        },
+                    },
+                    overrideAction: { none: {} },
+                    visibilityConfig: {
+                        cloudWatchMetricsEnabled: true,
+                        metricName: 'AWSManagedRulesCommonRuleSetMetric',
+                        sampledRequestsEnabled: true,
+                    },
+                },
+            ],
+        });
+
+        // カスタムドメインの設定
+        const domainName = this.node.tryGetContext('domainName');
+        const useCustomDomain = this.node.tryGetContext('useCustomDomain') === 'true';
+
+        let certificate;
+        if (useCustomDomain && domainName) {
+            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+                domainName
+            });
+
+            certificate = new acm.DnsValidatedCertificate(this, 'CloudFrontCertificate', {
+                domainName: `*.${domainName}`,
+                hostedZone,
+                region: 'us-east-1',
+                validation: acm.CertificateValidation.fromDns(hostedZone),
+            });
+        }
+
+        // CloudFrontディストリビューションの設定
+        const distribution = new cloudfront.Distribution(this, 'MediumDistribution', {
+            defaultBehavior: {
+                origin: new origins.LoadBalancerV2Origin(fargateService.loadBalancer, {
+                    protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+                }),
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+            },
+            domainNames: useCustomDomain && domainName ? [`${this.envName}.${domainName}`] : undefined,
+            certificate: useCustomDomain && certificate ? certificate : undefined,
+            priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+            webAclId: wafAcl.attrArn,
+            enableLogging: true,
+            logBucket: new s3.Bucket(this, 'CloudFrontLogsBucket', {
+                encryption: s3.BucketEncryption.S3_MANAGED,
+                removalPolicy: RemovalPolicy.RETAIN,
+                lifecycleRules: [
+                    {
+                        expiration: Duration.days(90),
+                    }
+                ]
+            }),
+        });
+
+        // Route53 DNSレコードの作成
+        if (useCustomDomain && domainName) {
+            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+                domainName
+            });
+
+            new route53.ARecord(this, 'CloudFrontAliasRecord', {
+                zone: hostedZone,
+                target: route53.RecordTarget.fromAlias(
+                    new targets.CloudFrontTarget(distribution)
+                ),
+                recordName: `${this.envName}.${domainName}`,
+            });
+        }
+
+        // CloudFrontディストリビューションからのS3バケットへのアクセスを許可
+        bucket.addToResourcePolicy(new iam.PolicyStatement({
+            actions: ['s3:GetObject'],
+            resources: [bucket.arnForObjects('*')],
+            principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+            conditions: {
+                'StringEquals': {
+                    'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`
+                }
+            }
+        }));
+
         // RedisへのアクセスをFargateサービスに許可
         redisSecurityGroup.addIngressRule(
             fargateService.service.connections.securityGroups[0],
             ec2.Port.tcp(6379),
             'Allow from Fargate service'
         );
-
-        // Route53とカスタムドメインの設定
-        const domainName = this.node.tryGetContext('domainName');
-        const useRoute53 = this.node.tryGetContext('useRoute53') === 'true';
-
-        if (useRoute53 && domainName) {
-            const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
-                domainName
-            });
-
-            new route53.ARecord(this, 'ALBDnsRecord', {
-                zone: hostedZone,
-                target: route53.RecordTarget.fromAlias(
-                    new targets.LoadBalancerTarget(fargateService.loadBalancer)
-                ),
-                recordName: `${this.envName}.${domainName}`,
-            });
-
-            // 環境変数にドメイン名を追加
-            container.addEnvironment('DOMAIN_NAME', `${this.envName}.${domainName}`);
-        }
 
         // CDK Outputs
         new cdk.CfnOutput(this, 'VpcId', {
@@ -269,6 +349,12 @@ export class InfraMediumStack extends InfrastructureStack {
             value: fargateService.loadBalancer.loadBalancerDnsName,
             description: 'Application Load Balancer DNS',
             exportName: `${this.projectPrefix}-${this.envName}-alb-dns`,
+        });
+
+        new cdk.CfnOutput(this, 'CloudFrontDomain', {
+            value: distribution.distributionDomainName,
+            description: 'CloudFront Distribution Domain Name',
+            exportName: `${this.projectPrefix}-${this.envName}-cloudfront-domain`,
         });
 
         new cdk.CfnOutput(this, 'BucketName', {
