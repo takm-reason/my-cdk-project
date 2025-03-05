@@ -38,3 +38,6 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Resource information files
+resource-info/*.json
