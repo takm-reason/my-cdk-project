@@ -10,52 +10,55 @@ export interface ResourceInfoCustomResourceProps {
 }
 
 export class ResourceInfoCustomResource extends Construct {
+    private static handler: lambda.Function;
     public readonly resourceInfo: cdk.CustomResource;
 
     constructor(scope: Construct, id: string, props: ResourceInfoCustomResourceProps) {
         super(scope, id);
 
-        // Lambda関数の作成
-        const handler = new lambda.Function(this, 'ResourceInfoHandler', {
-            runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 'resource-info-handler.handler',
-            code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda')),
-            timeout: cdk.Duration.minutes(5),
-            memorySize: 512,
-            environment: {
-                REGION: props.region,
-            },
-        });
+        // Lambda関数は一度だけ作成し、以降は再利用
+        if (!ResourceInfoCustomResource.handler) {
+            ResourceInfoCustomResource.handler = new lambda.Function(scope, 'SharedResourceInfoHandler', {
+                runtime: lambda.Runtime.NODEJS_18_X,
+                handler: 'resource-info-handler.handler',
+                code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda')),
+                timeout: cdk.Duration.minutes(5),
+                memorySize: 512,
+                environment: {
+                    REGION: props.region,
+                },
+            });
 
-        // 必要なIAMパーミッションを付与
-        handler.addToRolePolicy(new iam.PolicyStatement({
-            effect: iam.Effect.ALLOW,
-            actions: [
-                'cloudformation:DescribeStacks',
-                'cloudformation:DescribeStackResources',
-                'cloudformation:ListStackResources',
-                'ec2:DescribeVpcs',
-                'ec2:DescribeSubnets',
-                'rds:DescribeDBInstances',
-                'rds:DescribeDBClusters',
-                's3:GetBucketLocation',
-                'ecs:DescribeClusters',
-                'ecs:DescribeServices',
-                'elasticache:DescribeCacheClusters',
-                'elasticache:DescribeReplicationGroups',
-                'cloudfront:GetDistribution',
-                'wafv2:GetWebACL',
-                'shield:DescribeProtection',
-                'codepipeline:GetPipeline',
-                'cloudwatch:GetDashboard',
-                'ssm:GetParameter'
-            ],
-            resources: ['*'],  // 本番環境では必要に応じてリソースを制限
-        }));
+            // 必要なIAMパーミッションを付与
+            ResourceInfoCustomResource.handler.addToRolePolicy(new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    'cloudformation:DescribeStacks',
+                    'cloudformation:DescribeStackResources',
+                    'cloudformation:ListStackResources',
+                    'ec2:DescribeVpcs',
+                    'ec2:DescribeSubnets',
+                    'rds:DescribeDBInstances',
+                    'rds:DescribeDBClusters',
+                    's3:GetBucketLocation',
+                    'ecs:DescribeClusters',
+                    'ecs:DescribeServices',
+                    'elasticache:DescribeCacheClusters',
+                    'elasticache:DescribeReplicationGroups',
+                    'cloudfront:GetDistribution',
+                    'wafv2:GetWebACL',
+                    'shield:DescribeProtection',
+                    'codepipeline:GetPipeline',
+                    'cloudwatch:GetDashboard',
+                    'ssm:GetParameter'
+                ],
+                resources: ['*'],  // 本番環境では必要に応じてリソースを制限
+            }));
+        }
 
-        // CustomResourceの作成
+        // CustomResourceの作成（各インスタンスで個別に作成）
         this.resourceInfo = new cdk.CustomResource(this, 'ResourceInfo', {
-            serviceToken: handler.functionArn,
+            serviceToken: ResourceInfoCustomResource.handler.functionArn,
             properties: {
                 region: props.region,
                 stackName: props.stackName,
