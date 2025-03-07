@@ -9,6 +9,7 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as elasticloadbalancingv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { ResourceRecorder } from './utils/resource-recorder';
+import { ResourceInfoCustomResource } from './utils/resource-info-custom-resource';
 import { TagPolicyManager } from './utils/tag-policies';
 
 export interface SmallScaleStackProps extends cdk.StackProps {
@@ -143,6 +144,16 @@ export class SmallScaleStack extends cdk.Stack {
             ec2.Port.tcp(5432),
             'Allow access from Fargate service'
         );
+
+        // デプロイ後のリソース情報を取得するカスタムリソースを作成
+        const resourceInfo = new ResourceInfoCustomResource(this, 'ResourceInfo', {
+            region: this.region,
+            stackName: this.stackName,
+        });
+
+        // カスタムリソースからの情報をレコーダーに設定
+        resourceInfo.resourceInfo.getAtt('Data').toString();
+        recorder.setCustomResourceInfo(resourceInfo.getResourceInfo());
 
         // リソース情報をファイルに保存
         recorder.saveToFile();

@@ -24,6 +24,7 @@ export class ResourceRecorder {
     private readonly outputDir: string;
     private resources: ResourceInfo[] = [];
     private readonly createdAt: string;
+    private customResourceInfo: any;
 
     constructor(projectName: string) {
         this.projectName = projectName;
@@ -31,6 +32,7 @@ export class ResourceRecorder {
         this.ensureOutputDirectoryExists();
         // YYYY-MM-DD形式で今日の日付を設定
         this.createdAt = new Date().toISOString().split('T')[0];
+        this.customResourceInfo = {};
     }
 
     private ensureOutputDirectoryExists() {
@@ -297,15 +299,38 @@ export class ResourceRecorder {
         });
     }
 
+    public setCustomResourceInfo(info: any) {
+        this.customResourceInfo = info;
+    }
+
     public saveToFile() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const fileName = `${this.projectName}-${timestamp}.json`;
         const filePath = path.join(this.outputDir, fileName);
 
+        // リソース情報とカスタムリソースの情報をマージ
+        const mergedResources = this.resources.map(resource => {
+            const customInfo = this.customResourceInfo.resources?.find((r: any) =>
+                r.logicalId === resource.resourceId
+            );
+
+            if (customInfo) {
+                return {
+                    ...resource,
+                    physicalId: customInfo.physicalId,
+                    arn: customInfo.arn,
+                    status: customInfo.status,
+                    deployedProperties: customInfo.details
+                };
+            }
+            return resource;
+        });
+
         const output = {
             projectName: this.projectName,
             timestamp: new Date().toISOString(),
-            resources: this.resources
+            resources: mergedResources,
+            outputs: this.customResourceInfo.stackOutputs || []
         };
 
         fs.writeFileSync(filePath, JSON.stringify(output, null, 2));

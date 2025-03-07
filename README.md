@@ -154,7 +154,42 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 
 デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
 - ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
-- 保存される情報：リソースARN、エンドポイント、設定値など
+- 保存される情報：
+  - リソースの論理ID
+  - 物理ID
+  - リソースARN
+  - デプロイ後のステータス
+  - エンドポイントや設定値などの詳細情報
+  - CloudFormationスタックの出力値
+
+### 保存される情報の例
+```json
+{
+  "projectName": "your-project",
+  "timestamp": "2025-03-07T12:00:00.000Z",
+  "resources": [
+    {
+      "resourceType": "VPC",
+      "resourceId": "SmallScaleVPC",
+      "physicalId": "vpc-1234567890abcdef0",
+      "arn": "arn:aws:ec2:region:account:vpc/vpc-1234567890abcdef0",
+      "status": "CREATE_COMPLETE",
+      "properties": {
+        "vpcId": "vpc-1234567890abcdef0",
+        "cidrBlock": "10.0.0.0/16",
+        ...
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "OutputKey": "LoadBalancerDNS",
+      "OutputValue": "your-lb-123.region.elb.amazonaws.com",
+      "Description": "Application Load Balancer DNS Name"
+    }
+  ]
+}
+```
 
 ## タグ付け
 
