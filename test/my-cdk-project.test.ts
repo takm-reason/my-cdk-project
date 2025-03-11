@@ -4,7 +4,9 @@ import { SmallScaleStack } from '../lib/small-scale-stack';
 
 describe('SmallScaleStack', () => {
     const app = new cdk.App();
-    const stack = new SmallScaleStack(app, 'TestSmallScaleStack');
+    const stack = new SmallScaleStack(app, 'TestSmallScaleStack', {
+        projectName: 'test-project'
+    });
     const template = Template.fromStack(stack);
 
     // VPCのテスト

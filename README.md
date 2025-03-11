@@ -8,6 +8,7 @@
 - リソース情報の自動記録
 - 統一的なタグ付け
 - プロジェクトごとの分離
+- リソース情報の取得と表示
 
 ## スケール別の構成
 
@@ -113,6 +114,21 @@ cdk list-outputs SmallScaleStack
 
 # 作成されたリソースの一覧を確認
 cdk list-resources SmallScaleStack
+
+# デプロイされたリソースの詳細情報を表示
+npm run get-resources
+
+# 特定のプロジェクトのリソース情報を表示
+npm run get-resources -- --project your-project-name
+
+# 特定のリソースタイプの情報を表示
+npm run get-resources -- --type VPC
+npm run get-resources -- --type RDS
+npm run get-resources -- --type S3
+npm run get-resources -- --type ECS
+
+# プロジェクトとリソースタイプを組み合わせて表示
+npm run get-resources -- --project your-project-name --type RDS
 ```
 
 #### スタックの削除
@@ -155,6 +171,12 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
 - ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
 - 保存される情報：リソースARN、エンドポイント、設定値など
+
+### リソース情報の出力内容
+- プロジェクト名とタイムスタンプ
+- リソースタイプとID
+- 設定されているプロパティ
+- AWS CLIによる実際のリソース状態
 
 ## タグ付け
 
