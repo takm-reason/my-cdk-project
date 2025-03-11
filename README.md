@@ -95,37 +95,35 @@ npm run test
 cdk diff <StackName> -c project=your-project
 
 例：
-cdk diff your-project-development-small -c project=your-project
+cdk diff SmallScaleStack -c project=your-project
 
 # 2. ユニットテストの実行
 npm run test
 
 # 3. デプロイの実行（基本形）
-# スタック名の形式: {プロジェクト名}-{環境名}-{スケール}
-cdk deploy your-project-development-small -c project=your-project
+cdk deploy <StackName> -c project=your-project
 
 # スケール別のスタック指定
-cdk deploy your-project-development-small -c project=your-project    # 小規模構成
-cdk deploy your-project-development-medium -c project=your-project   # 中規模構成
-cdk deploy your-project-development-large -c project=your-project    # 大規模構成
+cdk deploy SmallScaleStack -c project=your-project    # 小規模構成
+cdk deploy MediumScaleStack -c project=your-project   # 中規模構成
+cdk deploy LargeScaleStack -c project=your-project    # 大規模構成
 ```
+
 #### 環境別のデプロイ
 ```bash
 # 開発環境へのデプロイ
-cdk deploy your-project-development-small -c project=your-project -c environment=development
+cdk deploy SmallScaleStack -c project=your-project -c environment=development
 
 # ステージング環境へのデプロイ
-cdk deploy your-project-staging-small -c project=your-project -c environment=staging
+cdk deploy SmallScaleStack -c project=your-project -c environment=staging
 
 # 本番環境へのデプロイ
-cdk deploy your-project-production-small -c project=your-project -c environment=production
+cdk deploy SmallScaleStack -c project=your-project -c environment=production
 
 # リージョン/アカウント指定デプロイ
-CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 \
-cdk deploy your-project-development-small -c project=your-project
+CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 cdk deploy SmallScaleStack -c project=your-project
 
 # 確認なしでデプロイ（CI/CD環境用）
-cdk deploy your-project-development-small -c project=your-project --require-approval never
 cdk deploy SmallScaleStack -c project=your-project --require-approval never
 ```
 
@@ -134,19 +132,19 @@ cdk deploy SmallScaleStack -c project=your-project --require-approval never
 #### リソース情報の確認
 ```bash
 # スタックの出力値を確認
-cdk list-outputs your-project-development-small
+cdk list-outputs SmallScaleStack
 
 # 作成されたリソースの一覧を確認
-cdk list-resources your-project-development-small
+cdk list-resources SmallScaleStack
 ```
 
 #### スタックの削除
 ```bash
 # スタックの削除（確認あり）
-cdk destroy your-project-development-small
+cdk destroy SmallScaleStack
 
 # スタックの強制削除（確認なし）
-cdk destroy your-project-development-small --force
+cdk destroy SmallScaleStack --force
 ```
 
 **重要なパラメータ：**
