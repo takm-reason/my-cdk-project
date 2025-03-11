@@ -20,7 +20,6 @@ import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as shield from 'aws-cdk-lib/aws-shield';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { ResourceRecorder } from './utils/resource-recorder';
-import { ResourceInfoCustomResource } from './utils/resource-info-custom-resource';
 import { TagPolicyManager } from './utils/tag-policies';
 
 export interface LargeScaleStackProps extends cdk.StackProps {
@@ -469,16 +468,6 @@ export class LargeScaleStack extends cdk.Stack {
         // パラメータ情報の記録
         recorder.recordParameter(databaseUrlParam, this.stackName);
         recorder.recordParameter(redisUrlParam, this.stackName);
-
-        // デプロイ後のリソース情報を取得するカスタムリソースを作成
-        const resourceInfo = new ResourceInfoCustomResource(this, 'ResourceInfo', {
-            region: this.region,
-            stackName: this.stackName,
-        });
-
-        // カスタムリソースからの情報をレコーダーに設定
-        resourceInfo.resourceInfo.getAtt('Data').toString();
-        recorder.setCustomResourceInfo(resourceInfo.getResourceInfo());
 
         // リソース情報をファイルに保存
         recorder.saveToFile();
