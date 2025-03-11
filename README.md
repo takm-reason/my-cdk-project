@@ -179,12 +179,24 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 
 ### リソース情報取得の仕組み
 
-デプロイされたリソースの情報は、以下の仕組みで自動的に取得・保存されます：
+デプロイされたリソースの情報は、以下の方法で取得・保存できます：
 
-1. CustomResourceによる情報取得:
-   - デプロイ完了時にLambda関数が起動
-   - AWS SDKを使用して各リソースの詳細情報を取得
-   - CloudFormationスタックの出力値も収集
+1. 手動での情報取得:
+   ```bash
+   # 開発環境の場合（ファイルに保存）
+   npm run get-resource-info -- -p your-project -s your-project-development-small -e development
+
+   # ステージング環境の場合（SSM Parameter Storeに保存）
+   npm run get-resource-info -- -p your-project -s your-project-staging-small -e staging
+
+   # 本番環境の場合（SSM Parameter Storeに保存）
+   npm run get-resource-info -- -p your-project -s your-project-production-small -e production
+   ```
+
+2. 取得方法の選択:
+   - 開発環境: ローカルのJSONファイルとして保存（`resource-info/`ディレクトリ）
+   - ステージング/本番環境: AWS Systems Manager Parameter Storeに保存
+   - パラメータパス形式: `/aws/cdk/{プロジェクト名}/{環境名}/resource-info`
 
 2. 取得される情報:
    - リソースの物理ID
