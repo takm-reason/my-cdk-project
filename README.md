@@ -41,8 +41,6 @@
 ## 使用方法
 
 ### 初期セットアップ
-
-#### 1. 基本セットアップ
 ```bash
 # 依存パッケージのインストール
 npm install
@@ -52,20 +50,6 @@ npm ci
 
 # AWS CDKの初期化（アカウントごとに初回のみ必要）
 cdk bootstrap
-```
-
-#### 2. リソース情報取得用Lambda関数の準備
-```bash
-# TypeScriptのビルド（Lambda関数のコードも含む）
-npm run build
-
-# Lambda関数のコードを確認
-ls -l lambda/resource-info-handler.ts
-
-# Lambda関数のデプロイは各スタックのデプロイ時に自動的に行われます
-# - CDKがTypeScriptコードをコンパイル
-# - コードをLambdaにパッケージング
-# - 必要なIAM権限を自動設定
 ```
 
 ### 開発作業
@@ -166,49 +150,9 @@ cdk context --clear
 aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 ```
 
-## リソース情報の取得と保存
+## リソース情報の保存
 
-### リソース情報取得の仕組み
-
-デプロイされたリソースの情報は、以下の仕組みで自動的に取得・保存されます：
-
-1. CustomResourceによる情報取得:
-   - デプロイ完了時にLambda関数が起動
-   - AWS SDKを使用して各リソースの詳細情報を取得
-   - CloudFormationスタックの出力値も収集
-
-2. 取得される情報:
-   - リソースの物理ID
-   - 完全なARN
-   - 現在のステータス
-   - エンドポイントなどの設定値
-   - タグ情報
-
-3. 必要なIAM権限:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": [
-           "cloudformation:DescribeStacks",
-           "cloudformation:ListStackResources",
-           "ec2:DescribeVpcs",
-           "rds:DescribeDBInstances",
-           "s3:GetBucketLocation",
-           "ecs:DescribeClusters",
-           "elasticache:DescribeCacheClusters"
-         ],
-         "Resource": "*"
-       }
-     ]
-   }
-   ```
-
-### リソース情報の保存
-
-収集された情報は`resource-info`ディレクトリに自動保存されます：
+デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
 - ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
 - 保存される情報：
   - リソースの論理ID
@@ -246,33 +190,6 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
   ]
 }
 ```
-
-### リソース情報取得のタイミングとトラブルシューティング
-
-1. デプロイ時の自動取得:
-   - スタックのデプロイ完了直後に自動実行
-   - Lambda関数による非同期処理
-   - CloudFormationのCustomResourceとして実装
-
-2. トラブルシューティング:
-   ```bash
-   # Lambda関数のログを確認
-   aws logs tail /aws/lambda/your-project-ResourceInfoHandler-XXXX
-
-   # CustomResourceのステータスを確認
-   aws cloudformation describe-stack-resources \
-     --stack-name your-project-SmallScaleStack \
-     --logical-resource-id ResourceInfo
-   
-   # 保存されたリソース情報を確認
-   ls -l resource-info/
-   cat resource-info/your-project-YYYY-MM-DDTHH-mm-ss.json
-   ```
-
-3. よくある問題と対処:
-   - Lambda関数のタイムアウト → タイムアウト時間の延長（現在: 5分）
-   - IAM権限不足 → 必要な権限の追加
-   - リソース情報の欠落 → CloudWatch Logsでエラーを確認
 
 ## タグ付け
 
