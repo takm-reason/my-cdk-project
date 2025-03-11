@@ -20,6 +20,19 @@ interface Resource {
     };
 }
 
+interface CloudFormationResource {
+    LogicalResourceId: string;
+    PhysicalResourceId: string;
+    ResourceType: string;
+    ResourceStatus: string;
+}
+
+interface CloudFormationOutput {
+    OutputKey: string;
+    OutputValue: string;
+    Description?: string;
+}
+
 async function getLatestResourceFile(directory: string): Promise<string> {
     try {
         const files = fs.readdirSync(directory)
@@ -51,38 +64,153 @@ function loadResourceInfo(filePath: string): ResourceInfo {
     }
 }
 
-async function getAwsResourceInfo(resourceType: string, resourceId: string): Promise<any> {
+async function getCloudFormationResources(stackName: string): Promise<CloudFormationResource[]> {
     try {
-        let command: string;
-        switch (resourceType) {
-            case 'VPC':
-                command = `aws ec2 describe-vpcs --filters Name=tag:Name,Values=${resourceId}`;
-                break;
-            case 'RDS':
-                command = `aws rds describe-db-instances --db-instance-identifier ${resourceId}`;
-                break;
-            case 'S3':
-                command = `aws s3api get-bucket-location --bucket ${resourceId}`;
-                break;
-            case 'ECS':
-                command = `aws ecs describe-clusters --clusters ${resourceId}`;
-                break;
-            default:
-                return null;
-        }
-
+        const command = `aws cloudformation describe-stack-resources --stack-name ${stackName}`;
         const output = execSync(command, { encoding: 'utf-8' });
-        return JSON.parse(output);
+        const result = JSON.parse(output);
+        return result.StackResources;
     } catch (error: any) {
-        console.error(`AWS情報取得エラー: ${error?.message || '不明なエラーが発生しました'}`);
+        console.error(`CloudFormationリソース取得エラー: ${error?.message || '不明なエラーが発生しました'}`);
+        return [];
+    }
+}
+
+async function getCloudFormationOutputs(stackName: string): Promise<CloudFormationOutput[]> {
+    try {
+        const command = `aws cloudformation describe-stacks --stack-name ${stackName}`;
+        const output = execSync(command, { encoding: 'utf-8' });
+        const result = JSON.parse(output);
+        return result.Stacks[0].Outputs || [];
+    } catch (error: any) {
+        console.error(`CloudFormationアウトプット取得エラー: ${error?.message || '不明なエラーが発生しました'}`);
+        return [];
+    }
+}
+
+async function getVpcSubnets(vpcId: string): Promise<any> {
+    try {
+        const command = `aws ec2 describe-subnets --filters "Name=vpc-id,Values=${vpcId}"`;
+        const output = execSync(command, { encoding: 'utf-8' });
+        const result = JSON.parse(output);
+        return result.Subnets;
+    } catch (error) {
         return null;
     }
 }
 
-function formatResourceInfo(resource: Resource): string {
+async function getAwsResourceDetails(resourceType: string, physicalId: string, cfnResources: CloudFormationResource[]): Promise<any> {
+    try {
+        let command: string;
+        switch (resourceType) {
+            case 'VPC': {
+                command = `aws ec2 describe-vpcs --vpc-ids ${physicalId}`;
+                const vpcInfo = JSON.parse(execSync(command, { encoding: 'utf-8' }));
+                const subnets = await getVpcSubnets(physicalId);
+
+                const publicSubnets = subnets
+                    .filter((s: any) => s.MapPublicIpOnLaunch)
+                    .map((s: any) => ({
+                        id: s.SubnetId,
+                        availabilityZone: s.AvailabilityZone,
+                        cidr: s.CidrBlock
+                    }));
+
+                const privateSubnets = subnets
+                    .filter((s: any) => !s.MapPublicIpOnLaunch)
+                    .map((s: any) => ({
+                        id: s.SubnetId,
+                        availabilityZone: s.AvailabilityZone,
+                        cidr: s.CidrBlock
+                    }));
+
+                return {
+                    vpcId: physicalId,
+                    vpcCidr: vpcInfo.Vpcs[0].CidrBlock,
+                    publicSubnets,
+                    privateSubnets
+                };
+            }
+            case 'RDS': {
+                command = `aws rds describe-db-instances --db-instance-identifier ${physicalId}`;
+                const dbInfo = JSON.parse(execSync(command, { encoding: 'utf-8' }));
+                return {
+                    instanceIdentifier: physicalId,
+                    databaseName: dbInfo.DBInstances[0].DBName || 'postgres',
+                    endpointAddress: dbInfo.DBInstances[0].Endpoint.Address,
+                    port: dbInfo.DBInstances[0].Endpoint.Port
+                };
+            }
+            case 'S3': {
+                command = `aws s3api get-bucket-location --bucket ${physicalId}`;
+                const s3Info = JSON.parse(execSync(command, { encoding: 'utf-8' }));
+                const region = s3Info.LocationConstraint || 'us-east-1';
+                return {
+                    bucketName: physicalId,
+                    bucketArn: `arn:aws:s3:::${physicalId}`,
+                    bucketDomainName: `${physicalId}.s3.amazonaws.com`,
+                    bucketWebsiteUrl: `http://${physicalId}.s3-website-${region}.amazonaws.com`
+                };
+            }
+            case 'ECS': {
+                command = `aws ecs describe-clusters --clusters ${physicalId}`;
+                const ecsInfo = JSON.parse(execSync(command, { encoding: 'utf-8' }));
+                const cluster = ecsInfo.clusters[0];
+
+                // サービス情報を取得
+                const serviceResource = cfnResources.find(r => r.ResourceType === 'AWS::ECS::Service');
+                const taskDefResource = cfnResources.find(r => r.ResourceType === 'AWS::ECS::TaskDefinition');
+
+                return {
+                    clusterName: cluster.clusterName,
+                    clusterArn: cluster.clusterArn,
+                    serviceArn: serviceResource?.PhysicalResourceId,
+                    taskDefinitionArn: taskDefResource?.PhysicalResourceId
+                };
+            }
+            default:
+                return null;
+        }
+    } catch (error) {
+        return null;
+    }
+}
+
+async function resolveTokens(resource: Resource, cfnOutputs: CloudFormationOutput[], cfnResources: CloudFormationResource[]): Promise<Resource> {
+    const resolvedProperties: { [key: string]: any } = { ...resource.properties };
+    const cfnResource = cfnResources.find(r => r.LogicalResourceId === resource.resourceId || r.LogicalResourceId.includes(resource.resourceId));
+
+    if (cfnResource) {
+        const resourceDetails = await getAwsResourceDetails(resource.resourceType, cfnResource.PhysicalResourceId, cfnResources);
+        if (resourceDetails) {
+            Object.assign(resolvedProperties, resourceDetails);
+        }
+    }
+
+    // Load Balancer DNSの解決
+    if (resolvedProperties.loadBalancerDns && resolvedProperties.loadBalancerDns.includes('${Token[')) {
+        const lbOutput = cfnOutputs.find(o => o.OutputKey === 'LoadBalancerDNS');
+        if (lbOutput) {
+            resolvedProperties.loadBalancerDns = lbOutput.OutputValue;
+        }
+    }
+
+    return {
+        ...resource,
+        properties: resolvedProperties
+    };
+}
+
+function formatResourceInfo(resource: Resource, cfnResource?: CloudFormationResource): string {
     const output: string[] = [];
     output.push(`リソースタイプ: ${resource.resourceType}`);
     output.push(`リソースID: ${resource.resourceId}`);
+
+    if (cfnResource) {
+        output.push(`物理ID: ${cfnResource.PhysicalResourceId}`);
+        output.push(`ステータス: ${cfnResource.ResourceStatus}`);
+    }
+
     output.push('プロパティ:');
 
     Object.entries(resource.properties).forEach(([key, value]) => {
@@ -110,6 +238,21 @@ function formatResourceInfo(resource: Resource): string {
     return output.join('\n');
 }
 
+function getAwsResourceType(resourceType: string): string {
+    switch (resourceType) {
+        case 'AWS::EC2::VPC':
+            return 'VPC';
+        case 'AWS::RDS::DBInstance':
+            return 'RDS';
+        case 'AWS::S3::Bucket':
+            return 'S3';
+        case 'AWS::ECS::Cluster':
+            return 'ECS';
+        default:
+            return '';
+    }
+}
+
 async function main() {
     const argv = await yargs(hideBin(process.argv))
         .option('project', {
@@ -132,18 +275,40 @@ async function main() {
     console.log(`タイムスタンプ: ${data.timestamp}`);
     console.log('==================\n');
 
+    // CloudFormationスタックのリソースとアウトプット情報を取得
+    const stackName = `${data.projectName}-development-small`;
+    const cfnResources = await getCloudFormationResources(stackName);
+    const cfnOutputs = await getCloudFormationOutputs(stackName);
+
     for (const resource of data.resources) {
         if (argv.project && argv.project !== data.projectName) continue;
         if (argv.type && argv.type !== resource.resourceType) continue;
 
-        console.log(formatResourceInfo(resource));
+        // CloudFormationリソースを検索
+        const cfnResource = cfnResources.find(r => {
+            const awsType = getAwsResourceType(r.ResourceType);
+            return awsType === resource.resourceType &&
+                (r.LogicalResourceId === resource.resourceId ||
+                    r.LogicalResourceId.includes(resource.resourceId));
+        });
+
+        // トークンを実際の値に解決
+        const resolvedResource = await resolveTokens(resource, cfnOutputs, cfnResources);
+
+        console.log(formatResourceInfo(resolvedResource, cfnResource));
         console.log('-'.repeat(50));
 
-        const awsInfo = await getAwsResourceInfo(resource.resourceType, resource.resourceId);
-        if (awsInfo) {
-            console.log('AWS上の実際のリソース情報:');
-            console.log(JSON.stringify(awsInfo, null, 2));
-            console.log('-'.repeat(50));
+        if (cfnResource) {
+            const awsInfo = await getAwsResourceDetails(
+                resource.resourceType,
+                cfnResource.PhysicalResourceId,
+                cfnResources
+            );
+            if (awsInfo) {
+                console.log('AWS上の実際のリソース情報:');
+                console.log(JSON.stringify(awsInfo, null, 2));
+                console.log('-'.repeat(50));
+            }
         }
     }
 }
