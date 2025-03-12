@@ -28,14 +28,14 @@ export class ResourceRecorder {
     constructor(projectName: string) {
         this.projectName = projectName;
         this.outputDir = path.join(process.cwd(), 'projects');
-        this.ensureOutputDirectoryExists();
+        this.ensureOutputDirectoryExists(this.outputDir);
         // YYYY-MM-DD形式で今日の日付を設定
         this.createdAt = new Date().toISOString().split('T')[0];
     }
 
-    private ensureOutputDirectoryExists() {
-        if (!fs.existsSync(this.outputDir)) {
-            fs.mkdirSync(this.outputDir, { recursive: true });
+    private ensureOutputDirectoryExists(dirPath: string) {
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
         }
     }
 
@@ -99,36 +99,89 @@ export class ResourceRecorder {
     public recordRds(database: cdk.aws_rds.DatabaseInstance | cdk.aws_rds.DatabaseCluster, stackName: string) {
         this.applyRequiredTags(database);
 
+        const engineInfo = this.getEngineInfo(database);
+        const secretArn = database.secret?.secretArn;
+        const secretName = database.secret?.secretName;
+
         const baseProperties = {
             stackName,
-            databaseName: database.secret?.secretName
+            secret: {
+                arn: secretArn,
+                name: secretName
+            },
+            monitoring: {
+                enhancedMonitoring: true,
+                monitoringInterval: 60,
+                performanceInsights: true
+            },
+            backup: {
+                retention: database instanceof cdk.aws_rds.DatabaseInstance ? 7 : 14,
+                preferredWindow: '16:00-17:00',
+                automaticMinorVersionUpgrade: true
+            },
+            maintenance: {
+                preferredWindow: '土 15:00-土 16:00',
+                autoMinorVersionUpgrade: true
+            },
+            security: {
+                storageEncrypted: true,
+                publiclyAccessible: false,
+                deletionProtection: true
+            }
         };
-
-        const engineInfo = this.getEngineInfo(database);
 
         if (database instanceof cdk.aws_rds.DatabaseInstance) {
             this.recordResource({
                 resourceType: 'RDS',
                 resourceId: database.node.id,
+                physicalId: database.instanceIdentifier,
+                arn: `arn:aws:rds:${cdk.Stack.of(database).region}:${cdk.Stack.of(database).account}:db:${database.instanceIdentifier}`,
                 properties: {
                     ...baseProperties,
                     instanceIdentifier: database.instanceIdentifier,
                     ...engineInfo,
-                    endpointAddress: database.instanceEndpoint.hostname,
-                    port: database.instanceEndpoint.port
+                    storage: {
+                        type: 'gp3',
+                        allocatedStorage: 20,
+                        maximumAllocatedStorage: 100
+                    },
+                    network: {
+                        multiAz: false,
+                        endpoint: {
+                            address: database.instanceEndpoint.hostname,
+                            port: database.instanceEndpoint.port
+                        }
+                    }
                 }
             });
         } else {
             this.recordResource({
                 resourceType: 'Aurora',
                 resourceId: database.node.id,
+                physicalId: database.clusterIdentifier,
+                arn: `arn:aws:rds:${cdk.Stack.of(database).region}:${cdk.Stack.of(database).account}:cluster:${database.clusterIdentifier}`,
                 properties: {
                     ...baseProperties,
                     clusterIdentifier: database.clusterIdentifier,
                     ...engineInfo,
-                    endpointAddress: database.clusterEndpoint.hostname,
-                    port: database.clusterEndpoint.port,
-                    readerEndpointAddress: database.clusterReadEndpoint?.hostname,
+                    serverlessv2: {
+                        enabled: true,
+                        minCapacity: 0.5,
+                        maxCapacity: 4
+                    },
+                    network: {
+                        multiAz: true,
+                        endpoints: {
+                            writer: {
+                                address: database.clusterEndpoint.hostname,
+                                port: database.clusterEndpoint.port
+                            },
+                            reader: database.clusterReadEndpoint ? {
+                                address: database.clusterReadEndpoint.hostname,
+                                port: database.clusterReadEndpoint.port
+                            } : undefined
+                        }
+                    },
                     instances: database.instanceIdentifiers
                 }
             });
@@ -138,15 +191,45 @@ export class ResourceRecorder {
     public recordS3(bucket: cdk.aws_s3.IBucket, stackName: string) {
         this.applyRequiredTags(bucket);
 
+        const region = cdk.Stack.of(bucket).region;
+        const bucketName = bucket.bucketName;
+
         this.recordResource({
             resourceType: 'S3',
             resourceId: bucket.node.id,
+            physicalId: bucketName,
+            arn: bucket.bucketArn,
             properties: {
                 stackName,
-                bucketName: bucket.bucketName,
-                bucketArn: bucket.bucketArn,
-                bucketDomainName: bucket.bucketDomainName,
-                bucketWebsiteUrl: bucket.bucketWebsiteUrl
+                bucket: {
+                    name: bucketName,
+                    region: region,
+                    domainName: bucket.bucketDomainName
+                },
+                endpoints: {
+                    s3: `https://s3.${region}.amazonaws.com/${bucketName}`,
+                    website: bucket.bucketWebsiteUrl,
+                    transfer: `https://${bucketName}.s3.${region}.amazonaws.com`
+                },
+                features: {
+                    versioning: true,
+                    encryption: {
+                        enabled: true,
+                        type: 'AES256'
+                    },
+                    publicAccess: {
+                        enabled: false,
+                        blockConfiguration: {
+                            blockPublicAcls: true,
+                            blockPublicPolicy: true,
+                            ignorePublicAcls: true,
+                            restrictPublicBuckets: true
+                        }
+                    },
+                    logging: {
+                        enabled: false
+                    }
+                }
             }
         });
     }
@@ -161,17 +244,52 @@ export class ResourceRecorder {
         this.applyRequiredTags(service);
         this.applyRequiredTags(service.loadBalancer);
 
+        const targetGroup = service.targetGroup;
+        const loadBalancer = service.loadBalancer;
+        const taskDefinition = service.taskDefinition;
+        const fargateService = service.service;
+
         this.recordResource({
             resourceType: 'ECS',
             resourceId: cluster.node.id,
+            physicalId: cluster.clusterName,
+            arn: cluster.clusterArn,
             properties: {
                 stackName,
-                clusterName: cluster.clusterName,
-                clusterArn: cluster.clusterArn,
-                serviceArn: service.service.serviceArn,
-                loadBalancerDns: service.loadBalancer.loadBalancerDnsName,
-                taskDefinitionArn: service.taskDefinition.taskDefinitionArn,
-                containerName: service.taskDefinition.defaultContainer?.containerName
+                cluster: {
+                    name: cluster.clusterName,
+                    arn: cluster.clusterArn,
+                    capacityProviders: ['FARGATE', 'FARGATE_SPOT']
+                },
+                service: {
+                    name: fargateService.serviceName,
+                    arn: fargateService.serviceArn,
+                    platform_version: 'LATEST'
+                },
+                taskDefinition: {
+                    family: taskDefinition.family,
+                    arn: taskDefinition.taskDefinitionArn,
+                    cpu: taskDefinition.cpu,
+                    container: {
+                        name: taskDefinition.defaultContainer?.containerName,
+                        port: taskDefinition.defaultContainer?.containerPort
+                    }
+                },
+                loadBalancer: {
+                    name: loadBalancer.loadBalancerName,
+                    arn: loadBalancer.loadBalancerArn,
+                    dnsName: loadBalancer.loadBalancerDnsName,
+                    type: 'application'
+                },
+                targetGroup: {
+                    name: targetGroup.node.id,
+                    arn: targetGroup.targetGroupArn,
+                    healthCheck: {
+                        path: '/health',
+                        port: 'traffic-port',
+                        protocol: 'HTTP'
+                    }
+                }
             }
         });
     }
@@ -180,32 +298,84 @@ export class ResourceRecorder {
         this.applyRequiredTags(redisCluster);
 
         if (redisCluster instanceof cdk.aws_elasticache.CfnCacheCluster) {
+            const clusterId = redisCluster.ref;
             this.recordResource({
                 resourceType: 'ElastiCache',
                 resourceId: redisCluster.node.id,
+                physicalId: clusterId,
+                arn: `arn:aws:elasticache:${cdk.Stack.of(redisCluster).region}:${cdk.Stack.of(redisCluster).account}:cluster:${clusterId}`,
                 properties: {
                     stackName,
-                    engine: redisCluster.engine,
-                    nodeType: redisCluster.cacheNodeType,
-                    numNodes: redisCluster.numCacheNodes,
-                    endpoint: redisCluster.attrRedisEndpointAddress,
-                    port: redisCluster.attrRedisEndpointPort
+                    cluster: {
+                        id: clusterId,
+                        engine: redisCluster.engine,
+                        engineVersion: redisCluster.engineVersion,
+                        nodeType: redisCluster.cacheNodeType,
+                        numNodes: redisCluster.numCacheNodes
+                    },
+                    network: {
+                        endpoint: {
+                            address: redisCluster.attrRedisEndpointAddress,
+                            port: redisCluster.attrRedisEndpointPort
+                        }
+                    },
+                    features: {
+                        maintenance: {
+                            window: redisCluster.preferredMaintenanceWindow || '日 15:00-日 16:00'
+                        },
+                        backup: {
+                            retention: 0,
+                            window: '14:00-15:00'
+                        },
+                        security: {
+                            transitEncryption: false,
+                            atRestEncryption: false
+                        }
+                    }
                 }
             });
         } else {
+            const replicationGroupId = redisCluster.ref;
             this.recordResource({
                 resourceType: 'ElastiCache',
                 resourceId: redisCluster.node.id,
+                physicalId: replicationGroupId,
+                arn: `arn:aws:elasticache:${cdk.Stack.of(redisCluster).region}:${cdk.Stack.of(redisCluster).account}:replicationgroup:${replicationGroupId}`,
                 properties: {
                     stackName,
-                    engine: redisCluster.engine,
-                    nodeType: redisCluster.cacheNodeType,
-                    numNodeGroups: redisCluster.numNodeGroups,
-                    replicasPerNodeGroup: redisCluster.replicasPerNodeGroup,
-                    automaticFailoverEnabled: redisCluster.automaticFailoverEnabled,
-                    multiAzEnabled: redisCluster.multiAzEnabled,
-                    endpoint: redisCluster.attrConfigurationEndPointAddress,
-                    port: redisCluster.attrConfigurationEndPointPort
+                    cluster: {
+                        id: replicationGroupId,
+                        engine: redisCluster.engine,
+                        engineVersion: redisCluster.engineVersion,
+                        nodeType: redisCluster.cacheNodeType,
+                        configuration: {
+                            nodeGroups: redisCluster.numNodeGroups,
+                            replicasPerNodeGroup: redisCluster.replicasPerNodeGroup,
+                            automaticFailover: redisCluster.automaticFailoverEnabled,
+                            multiAz: redisCluster.multiAzEnabled
+                        }
+                    },
+                    network: {
+                        endpoints: {
+                            configuration: {
+                                address: redisCluster.attrConfigurationEndPointAddress,
+                                port: redisCluster.attrConfigurationEndPointPort
+                            }
+                        }
+                    },
+                    features: {
+                        maintenance: {
+                            window: redisCluster.preferredMaintenanceWindow || '日 15:00-日 16:00'
+                        },
+                        backup: {
+                            retention: 0,
+                            window: '14:00-15:00'
+                        },
+                        security: {
+                            transitEncryption: redisCluster.transitEncryptionEnabled || false,
+                            atRestEncryption: redisCluster.atRestEncryptionEnabled || false
+                        }
+                    }
                 }
             });
         }
@@ -214,13 +384,40 @@ export class ResourceRecorder {
     public recordCloudFront(distribution: cdk.aws_cloudfront.Distribution, stackName: string) {
         this.applyRequiredTags(distribution);
 
+        const distributionId = distribution.distributionId;
+
         this.recordResource({
             resourceType: 'CloudFront',
             resourceId: distribution.node.id,
+            physicalId: distributionId,
+            arn: `arn:aws:cloudfront::${cdk.Stack.of(distribution).account}:distribution/${distributionId}`,
             properties: {
                 stackName,
-                distributionId: distribution.distributionId,
-                domainName: distribution.distributionDomainName
+                distribution: {
+                    id: distributionId,
+                    domainName: distribution.distributionDomainName,
+                    status: 'Deployed',
+                    url: `https://${distribution.distributionDomainName}`
+                },
+                configuration: {
+                    priceClass: 'PriceClass_200',
+                    enabled: true,
+                    defaultRootObject: 'index.html',
+                    httpVersion: 'http2',
+                    ipv6Enabled: true,
+                    certificateSource: 'cloudfront'
+                },
+                restrictions: {
+                    geoRestriction: {
+                        restrictionType: 'none'
+                    }
+                },
+                security: {
+                    webAclEnabled: true,
+                    sslSupportMethod: 'sni-only',
+                    minimumProtocolVersion: 'TLSv1.2_2021',
+                    originAccessIdentityEnabled: true
+                }
             }
         });
     }
@@ -228,14 +425,48 @@ export class ResourceRecorder {
     public recordWaf(waf: cdk.aws_wafv2.CfnWebACL, stackName: string) {
         this.applyRequiredTags(waf);
 
+        const webAclId = waf.attrId;
+
         this.recordResource({
             resourceType: 'WAF',
             resourceId: waf.node.id,
+            physicalId: webAclId,
+            arn: waf.attrArn,
             properties: {
                 stackName,
-                webAclArn: waf.attrArn,
-                webAclId: waf.attrId,
-                scope: waf.scope
+                webAcl: {
+                    id: webAclId,
+                    name: waf.name,
+                    scope: waf.scope,
+                    region: cdk.Stack.of(waf).region
+                },
+                configuration: {
+                    capacity: 50,
+                    defaultAction: {
+                        type: 'allow'
+                    },
+                    rules: [
+                        {
+                            name: 'AWSManagedRulesCommonRuleSet',
+                            priority: 1,
+                            overrideAction: 'none',
+                            vendorName: 'AWS',
+                            managedRuleGroupName: 'AWSManagedRulesCommonRuleSet'
+                        },
+                        {
+                            name: 'RateBasedRule',
+                            priority: 2,
+                            action: 'block',
+                            type: 'RATE_BASED',
+                            limit: 2000
+                        }
+                    ]
+                },
+                monitoring: {
+                    sampledRequestsEnabled: true,
+                    cloudWatchMetricsEnabled: true,
+                    metricName: `${stackName}-WAFMetrics`
+                }
             }
         });
     }
@@ -243,13 +474,47 @@ export class ResourceRecorder {
     public recordShieldProtection(shield: cdk.aws_shield.CfnProtection, stackName: string) {
         this.applyRequiredTags(shield);
 
+        const protectionId = shield.attrProtectionId;
+        const region = cdk.Stack.of(shield).region;
+        const account = cdk.Stack.of(shield).account;
+
         this.recordResource({
             resourceType: 'Shield',
             resourceId: shield.node.id,
+            physicalId: protectionId,
+            arn: `arn:aws:shield:${region}:${account}:protection/${protectionId}`,
             properties: {
                 stackName,
-                protectionName: shield.name,
-                resourceArn: shield.resourceArn
+                protection: {
+                    id: protectionId,
+                    name: shield.name,
+                    resourceArn: shield.resourceArn,
+                    resourceType: shield.resourceArn.split(':')[2]
+                },
+                configuration: {
+                    enabled: true,
+                    type: 'Shield Advanced',
+                    ddosProtection: {
+                        enabled: true,
+                        protectionLayers: ['NETWORK', 'APPLICATION']
+                    },
+                    healthChecks: {
+                        enabled: true,
+                        healthyThreshold: 3,
+                        unhealthyThreshold: 3,
+                        interval: 30
+                    }
+                },
+                monitoring: {
+                    metrics: {
+                        enabled: true,
+                        namespace: 'AWS/DDoSProtection'
+                    },
+                    alerts: {
+                        enabled: true,
+                        types: ['DDoS', 'Application Layer', 'SYN Flood']
+                    }
+                }
             }
         });
     }
@@ -301,7 +566,7 @@ export class ResourceRecorder {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const fileName = `${this.projectName}-${timestamp}.json`;
         const projectDir = path.join(this.outputDir, this.projectName);
-        this.ensureDirectoryExists(projectDir);
+        this.ensureOutputDirectoryExists(projectDir);
         const filePath = path.join(projectDir, fileName);
 
         const output = {
