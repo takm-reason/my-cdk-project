@@ -257,7 +257,7 @@ async function generateConfig(projectName: string, environment: string = 'develo
     };
 
     // プロジェクトディレクトリ構造を作成
-    const projectDir = path.join(process.cwd(), 'resource-info', 'projects', projectName);
+    const projectDir = path.join(process.cwd(), 'projects', projectName);
     ensureDirectoryExists(projectDir);
 
     // 設定ファイルを生成

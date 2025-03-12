@@ -27,7 +27,7 @@ export class ResourceRecorder {
 
     constructor(projectName: string) {
         this.projectName = projectName;
-        this.outputDir = path.join(process.cwd(), 'resource-info');
+        this.outputDir = path.join(process.cwd(), 'projects');
         this.ensureOutputDirectoryExists();
         // YYYY-MM-DD形式で今日の日付を設定
         this.createdAt = new Date().toISOString().split('T')[0];

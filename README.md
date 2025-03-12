@@ -168,7 +168,7 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 
 ## リソース情報の保存
 
-デプロイ時に作成されたリソースの情報は`resource-info`ディレクトリに自動保存されます：
+デプロイ時に作成されたリソースの情報は`projects`ディレクトリに自動保存されます：
 - ファイル名形式：`{プロジェクト名}-{タイムスタンプ}.json`
 - 保存される情報：リソースARN、エンドポイント、設定値など
 
@@ -224,7 +224,7 @@ npm run generate-rails-config -- --project your-project --environment production
 
 設定ファイルは以下のパスに生成されます：
 ```
-resource-info/projects/<project-name>/aws_resources.<environment>.yml
+projects/<project-name>/aws_resources.<environment>.yml
 ```
 
 生成される設定には以下の情報が含まれます：
@@ -264,7 +264,7 @@ resource-info/projects/<project-name>/aws_resources.<environment>.yml
 # config/initializers/aws_resources.rb
 require 'yaml'
 
-config_path = Rails.root.join('resource-info/projects', ENV['PROJECT_NAME'], "aws_resources.#{Rails.env}.yml")
+config_path = Rails.root.join('projects', ENV['PROJECT_NAME'], "aws_resources.#{Rails.env}.yml")
 AWS_RESOURCES = YAML.load_file(config_path).deep_symbolize_keys
 
 # データベース接続情報の利用

@@ -266,7 +266,7 @@ async function main() {
         })
         .argv;
 
-    const resourceInfoDir = path.join(process.cwd(), 'resource-info');
+    const resourceInfoDir = path.join(process.cwd(), 'projects');
     const latestFile = await getLatestResourceFile(resourceInfoDir);
     const data = loadResourceInfo(latestFile);
 
