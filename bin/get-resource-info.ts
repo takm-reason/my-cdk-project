@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import * as yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
+import { TokenResolver } from '../lib/utils/token-resolver';
 
 interface ResourceInfo {
     projectName: string;
@@ -201,29 +202,8 @@ async function getAwsResourceDetails(resourceType: string, physicalId: string, c
     }
 }
 
-async function resolveTokens(resource: Resource, cfnOutputs: CloudFormationOutput[], cfnResources: CloudFormationResource[]): Promise<Resource> {
-    const resolvedProperties: { [key: string]: any } = { ...resource.properties };
-    const cfnResource = cfnResources.find(r => r.LogicalResourceId === resource.resourceId || r.LogicalResourceId.includes(resource.resourceId));
-
-    if (cfnResource) {
-        const resourceDetails = await getAwsResourceDetails(resource.resourceType, cfnResource.PhysicalResourceId, cfnResources);
-        if (resourceDetails) {
-            Object.assign(resolvedProperties, resourceDetails);
-        }
-    }
-
-    // Load Balancer DNSの解決
-    if (resolvedProperties.loadBalancerDns && resolvedProperties.loadBalancerDns.includes('${Token[')) {
-        const lbOutput = cfnOutputs.find(o => o.OutputKey === 'LoadBalancerDNS');
-        if (lbOutput) {
-            resolvedProperties.loadBalancerDns = lbOutput.OutputValue;
-        }
-    }
-
-    return {
-        ...resource,
-        properties: resolvedProperties
-    };
+async function resolveResourceTokens(resource: Resource, resolver: TokenResolver): Promise<Resource> {
+    return resolver.resolveTokens(resource);
 }
 
 function formatResourceInfo(resource: Resource, cfnResource?: CloudFormationResource): string {
@@ -320,56 +300,27 @@ async function main() {
     console.log(`タイムスタンプ: ${data.timestamp}`);
     console.log('==================\n');
 
-    // CloudFormationスタックのリソースとアウトプット情報を取得
+    // TokenResolverの初期化
     const stackName = `${data.projectName}-development-small`;
-    const cfnResources = await getCloudFormationResources(stackName);
-    const cfnOutputs = await getCloudFormationOutputs(stackName);
+    const resolver = new TokenResolver(stackName);
+    await resolver.initialize();
 
-    for (const resource of data.resources) {
-        if (argv.project && argv.project !== data.projectName) continue;
-        if (argv.type && argv.type !== resource.resourceType) continue;
+    // リソース情報の処理
+    const filteredResources = data.resources.filter(resource =>
+        (!argv.project || argv.project === data.projectName) &&
+        (!argv.type || argv.type === resource.resourceType)
+    );
 
-        // CloudFormationリソースを検索
-        const cfnResource = cfnResources.find(r => {
-            const awsType = getAwsResourceType(r.ResourceType);
-            return awsType === resource.resourceType &&
-                (r.LogicalResourceId === resource.resourceId ||
-                    r.LogicalResourceId.includes(resource.resourceId));
-        });
-
+    for (const resource of filteredResources) {
         // トークンを実際の値に解決
-        const resolvedResource = await resolveTokens(resource, cfnOutputs, cfnResources);
-
-        console.log(formatResourceInfo(resolvedResource, cfnResource));
+        const resolvedResource = await resolveResourceTokens(resource, resolver);
+        console.log(formatResourceInfo(resolvedResource));
         console.log('-'.repeat(50));
-
-        if (cfnResource) {
-            const awsInfo = await getAwsResourceDetails(
-                resource.resourceType,
-                cfnResource.PhysicalResourceId,
-                cfnResources
-            );
-            if (awsInfo) {
-                console.log('AWS上の実際のリソース情報:');
-                console.log(JSON.stringify(awsInfo, null, 2));
-                console.log('-'.repeat(50));
-            }
-        }
     }
 
-    // 取得したリソース情報を新しいJSONファイルとして保存
+    // 全リソースの解決と保存
     const resolvedResources = await Promise.all(
-        data.resources
-            .filter(resource => !argv.type || argv.type === resource.resourceType)
-            .map(async resource => {
-                const cfnResource = cfnResources.find(r => {
-                    const awsType = getAwsResourceType(r.ResourceType);
-                    return awsType === resource.resourceType &&
-                        (r.LogicalResourceId === resource.resourceId ||
-                            r.LogicalResourceId.includes(resource.resourceId));
-                });
-                return resolveTokens(resource, cfnOutputs, cfnResources);
-            })
+        filteredResources.map(resource => resolveResourceTokens(resource, resolver))
     );
 
     await saveResourceInfo(data.projectName, resolvedResources, resourceInfoDir);

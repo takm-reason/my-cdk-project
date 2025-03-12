@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { IConstruct } from 'constructs';
+import { TokenResolver } from './token-resolver';
 
 export interface ResourceInfo {
     resourceType: string;
@@ -562,17 +563,26 @@ export class ResourceRecorder {
         });
     }
 
-    public saveToFile() {
+    public async saveToFile() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const fileName = `${this.projectName}-${timestamp}.json`;
         const projectDir = path.join(this.outputDir, this.projectName);
         this.ensureOutputDirectoryExists(projectDir);
         const filePath = path.join(projectDir, fileName);
 
+        // TokenResolverを初期化
+        const resolver = new TokenResolver(`${this.projectName}-development-small`);
+        await resolver.initialize();
+
+        // 各リソースのトークンを解決
+        const resolvedResources = await Promise.all(
+            this.resources.map(resource => resolver.resolveTokens(resource))
+        );
+
         const output = {
             projectName: this.projectName,
             timestamp: new Date().toISOString(),
-            resources: this.resources
+            resources: resolvedResources
         };
 
         fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
