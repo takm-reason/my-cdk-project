@@ -278,6 +278,26 @@ function getAwsResourceType(resourceType: string): string {
     }
 }
 
+async function saveResourceInfo(projectName: string, resources: Resource[], outputDir: string) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `${projectName}-${timestamp}.json`;
+    const projectDir = path.join(outputDir, projectName);
+
+    if (!fs.existsSync(projectDir)) {
+        fs.mkdirSync(projectDir, { recursive: true });
+    }
+
+    const output = {
+        projectName,
+        timestamp: new Date().toISOString(),
+        resources
+    };
+
+    const filePath = path.join(projectDir, fileName);
+    fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
+    console.log(`\nリソース情報を保存しました: ${filePath}\n`);
+}
+
 async function main() {
     const argv = await yargs(hideBin(process.argv))
         .option('project', {
@@ -336,6 +356,23 @@ async function main() {
             }
         }
     }
+
+    // 取得したリソース情報を新しいJSONファイルとして保存
+    const resolvedResources = await Promise.all(
+        data.resources
+            .filter(resource => !argv.type || argv.type === resource.resourceType)
+            .map(async resource => {
+                const cfnResource = cfnResources.find(r => {
+                    const awsType = getAwsResourceType(r.ResourceType);
+                    return awsType === resource.resourceType &&
+                        (r.LogicalResourceId === resource.resourceId ||
+                            r.LogicalResourceId.includes(resource.resourceId));
+                });
+                return resolveTokens(resource, cfnOutputs, cfnResources);
+            })
+    );
+
+    await saveResourceInfo(data.projectName, resolvedResources, resourceInfoDir);
 }
 
 main().catch(error => {
