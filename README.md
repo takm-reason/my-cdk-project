@@ -201,6 +201,90 @@ aws cloudformation describe-stacks --stack-name your-project-SmallScaleStack
 - ECSコンテナインサイトの有効化
 - Auto Scalingメトリクスの監視
 
+## Rails用リソース設定の生成
+
+プロジェクトごとのAWSリソース設定をYAMLファイルとして生成するコマンドを提供しています。
+
+### 生成コマンド
+```bash
+# 基本形式
+npm run generate-rails-config -- --project <project-name> --environment <environment>
+
+# 開発環境の設定生成
+npm run generate-rails-config -- --project your-project --environment development
+
+# ステージング環境の設定生成
+npm run generate-rails-config -- --project your-project --environment staging
+
+# 本番環境の設定生成
+npm run generate-rails-config -- --project your-project --environment production
+```
+
+### 生成される設定ファイル
+
+設定ファイルは以下のパスに生成されます：
+```
+resource-info/projects/<project-name>/aws_resources.<environment>.yml
+```
+
+生成される設定には以下の情報が含まれます：
+
+1. データベース接続情報
+   - ホスト名
+   - ポート番号
+   - データベース名
+   - ユーザー名
+   - パスワード
+
+2. S3ストレージ設定
+   - バケット名
+   - リージョン
+   - エンドポイント
+
+3. AWS共通設定
+   - リージョン
+   - VPC ID
+   - アカウントID
+
+4. ECS関連設定
+   - クラスター名
+   - サービス名
+   - タスク定義ARN
+   - コンテナ名
+   - CloudWatchロググループ名
+
+5. アプリケーション情報
+   - プロジェクト名
+   - 環境名
+   - ロードバランサーDNS
+
+### 設定ファイルの利用例（Rails）
+
+```ruby
+# config/initializers/aws_resources.rb
+require 'yaml'
+
+config_path = Rails.root.join('resource-info/projects', ENV['PROJECT_NAME'], "aws_resources.#{Rails.env}.yml")
+AWS_RESOURCES = YAML.load_file(config_path).deep_symbolize_keys
+
+# データベース接続情報の利用
+database_url = "postgresql://#{AWS_RESOURCES[:database][:username]}:#{AWS_RESOURCES[:database][:password]}@#{AWS_RESOURCES[:database][:host]}:#{AWS_RESOURCES[:database][:port]}/#{AWS_RESOURCES[:database][:database]}"
+
+# S3の設定
+s3_bucket = AWS_RESOURCES[:storage][:bucket_name]
+s3_region = AWS_RESOURCES[:storage][:region]
+
+# CloudWatchログの設定
+log_group = AWS_RESOURCES[:ecs][:log_group_name]
+```
+
+### Rails設定生成時の注意事項
+
+- 設定ファイルにはデータベースパスワードなどの機密情報が含まれるため、バージョン管理から除外することを推奨します
+- プロジェクト名は一意である必要があります
+- 環境は development、staging、production のいずれかを指定してください
+- AWS認証情報が適切に設定されていることを確認してください
+
 ## コスト最適化
 
 - 小規模：最小限のリソースで運用
