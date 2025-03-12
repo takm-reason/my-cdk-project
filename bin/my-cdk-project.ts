@@ -30,7 +30,23 @@ const stackProps = {
     }
 };
 
-// スケールごとのスタックを定義（デプロイは指定されたスタックのみ実行される）
-new SmallScaleStack(app, `${projectName}-${envName}-small`, stackProps);
-new MediumScaleStack(app, `${projectName}-${envName}-medium`, stackProps);
-new LargeScaleStack(app, `${projectName}-${envName}-large`, stackProps);
+// スケールの取得（small, medium, largeのいずれか）
+const scale = app.node.tryGetContext('scale');
+if (!scale) {
+    throw new Error('Scale must be specified with -c scale=<small|medium|large>');
+}
+
+// 指定されたスケールのスタックのみを初期化
+switch (scale.toLowerCase()) {
+    case 'small':
+        new SmallScaleStack(app, `${projectName}-${envName}-small`, stackProps);
+        break;
+    case 'medium':
+        new MediumScaleStack(app, `${projectName}-${envName}-medium`, stackProps);
+        break;
+    case 'large':
+        new LargeScaleStack(app, `${projectName}-${envName}-large`, stackProps);
+        break;
+    default:
+        throw new Error('Invalid scale. Must be one of: small, medium, large');
+}

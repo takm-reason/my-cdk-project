@@ -82,27 +82,27 @@ npm run test
 cdk deploy <StackName> -c project=your-project
 
 # スケール別のスタック指定
-cdk deploy SmallScaleStack -c project=your-project    # 小規模構成
-cdk deploy MediumScaleStack -c project=your-project   # 中規模構成
-cdk deploy LargeScaleStack -c project=your-project    # 大規模構成
+cdk deploy -c project=your-project -c scale=small    # 小規模構成
+cdk deploy -c project=your-project -c scale=medium   # 中規模構成
+cdk deploy -c project=your-project -c scale=large    # 大規模構成
 ```
 
 #### 環境別のデプロイ
 ```bash
 # 開発環境へのデプロイ
-cdk deploy SmallScaleStack -c project=your-project -c environment=development
+cdk deploy -c project=your-project -c scale=small -c environment=development
 
 # ステージング環境へのデプロイ
-cdk deploy SmallScaleStack -c project=your-project -c environment=staging
+cdk deploy -c project=your-project -c scale=small -c environment=staging
 
 # 本番環境へのデプロイ
-cdk deploy SmallScaleStack -c project=your-project -c environment=production
+cdk deploy -c project=your-project -c scale=small -c environment=production
 
 # リージョン/アカウント指定デプロイ
-CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 cdk deploy SmallScaleStack -c project=your-project
+CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=ap-northeast-1 cdk deploy -c project=your-project -c scale=small
 
 # 確認なしでデプロイ（CI/CD環境用）
-cdk deploy SmallScaleStack -c project=your-project --require-approval never
+cdk deploy -c project=your-project -c scale=small --require-approval never
 ```
 
 ### 運用管理
