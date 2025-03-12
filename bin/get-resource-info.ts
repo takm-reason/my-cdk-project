@@ -33,11 +33,36 @@ interface CloudFormationOutput {
     Description?: string;
 }
 
-async function getLatestResourceFile(directory: string): Promise<string> {
+async function getLatestResourceFile(directory: string, projectName?: string): Promise<string> {
     try {
-        const files = fs.readdirSync(directory)
-            .filter(file => file.endsWith('.json'))
-            .map(file => path.join(directory, file));
+        let searchDir = directory;
+        if (projectName) {
+            searchDir = path.join(directory, projectName);
+            if (!fs.existsSync(searchDir)) {
+                throw new Error(`プロジェクト "${projectName}" のディレクトリが見つかりません`);
+            }
+        }
+
+        // 全プロジェクトディレクトリを検索
+        let files: string[] = [];
+        if (projectName) {
+            // 指定されたプロジェクトディレクトリのみ検索
+            files = fs.readdirSync(searchDir)
+                .filter(file => file.endsWith('.json'))
+                .map(file => path.join(searchDir, file));
+        } else {
+            // 全プロジェクトディレクトリを検索
+            const projectDirs = fs.readdirSync(directory)
+                .filter(dir => fs.statSync(path.join(directory, dir)).isDirectory());
+
+            for (const dir of projectDirs) {
+                const dirPath = path.join(directory, dir);
+                const dirFiles = fs.readdirSync(dirPath)
+                    .filter(file => file.endsWith('.json'))
+                    .map(file => path.join(dirPath, file));
+                files = files.concat(dirFiles);
+            }
+        }
 
         if (files.length === 0) {
             throw new Error('リソース情報ファイルが見つかりません');
@@ -267,7 +292,7 @@ async function main() {
         .argv;
 
     const resourceInfoDir = path.join(process.cwd(), 'projects');
-    const latestFile = await getLatestResourceFile(resourceInfoDir);
+    const latestFile = await getLatestResourceFile(resourceInfoDir, argv.project);
     const data = loadResourceInfo(latestFile);
 
     console.log('=== リソース情報 ===');

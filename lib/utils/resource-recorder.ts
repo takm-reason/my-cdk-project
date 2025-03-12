@@ -300,7 +300,9 @@ export class ResourceRecorder {
     public saveToFile() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const fileName = `${this.projectName}-${timestamp}.json`;
-        const filePath = path.join(this.outputDir, fileName);
+        const projectDir = path.join(this.outputDir, this.projectName);
+        this.ensureDirectoryExists(projectDir);
+        const filePath = path.join(projectDir, fileName);
 
         const output = {
             projectName: this.projectName,
