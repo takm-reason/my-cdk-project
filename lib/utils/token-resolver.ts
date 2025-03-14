@@ -17,11 +17,44 @@ export class TokenResolver {
     private cfnOutputs: CloudFormationOutput[];
     private cfnResources: CloudFormationResource[];
     private stackName: string;
+    private region: string;
+    private accountId: string;
 
     constructor(stackName: string) {
         this.stackName = stackName;
         this.cfnOutputs = [];
         this.cfnResources = [];
+        this.region = process.env.AWS_REGION || 'ap-northeast-1';
+        this.accountId = '';
+    }
+
+    /**
+     * ARNを構築
+     */
+    private constructArn(resourceType: string, physicalId: string): string {
+        switch (resourceType) {
+            case 'RDS':
+                return `arn:aws:rds:${this.region}:${this.accountId}:db:${physicalId}`;
+            case 'S3':
+                return `arn:aws:s3:::${physicalId}`;
+            case 'ECS':
+                return `arn:aws:ecs:${this.region}:${this.accountId}:cluster/${physicalId}`;
+            default:
+                return '';
+        }
+    }
+
+    /**
+     * AWSアカウントIDを取得
+     */
+    private async getAccountId(): Promise<string> {
+        try {
+            const command = 'aws sts get-caller-identity --query Account --output text';
+            return execSync(command, { encoding: 'utf-8' }).trim();
+        } catch (error) {
+            console.error('アカウントID取得エラー:', error);
+            return '';
+        }
     }
 
     /**
@@ -30,6 +63,40 @@ export class TokenResolver {
     async initialize(): Promise<void> {
         this.cfnResources = await this.getCloudFormationResources();
         this.cfnOutputs = await this.getCloudFormationOutputs();
+        this.accountId = await this.getAccountId();
+    }
+
+    /**
+     * ECSサービスの詳細情報を取得
+     */
+    private async getEcsServiceDetails(clusterName: string, serviceArn: string): Promise<any> {
+        try {
+            const command = `aws ecs describe-services --cluster ${clusterName} --services ${serviceArn}`;
+            const serviceInfo = JSON.parse(execSync(command, { encoding: 'utf-8' }));
+            const service = serviceInfo.services[0];
+
+            // タスク定義の詳細を取得
+            const taskDefCommand = `aws ecs describe-task-definition --task-definition ${service.taskDefinition}`;
+            const taskDefInfo = JSON.parse(execSync(taskDefCommand, { encoding: 'utf-8' }));
+            const taskDef = taskDefInfo.taskDefinition;
+
+            return {
+                name: service.serviceName,
+                arn: service.serviceArn,
+                status: service.status,
+                desiredCount: service.desiredCount,
+                runningCount: service.runningCount,
+                taskDefinition: {
+                    family: taskDef.family,
+                    arn: taskDef.taskDefinitionArn,
+                    cpu: taskDef.cpu,
+                    container: taskDef.containerDefinitions[0]
+                }
+            };
+        } catch (error) {
+            console.error('ECSサービス詳細取得エラー:', error);
+            return null;
+        }
     }
 
     /**
@@ -68,6 +135,12 @@ export class TokenResolver {
     private async getAwsResourceDetails(resourceType: string, physicalId: string): Promise<any> {
         try {
             let command: string;
+            let details: any = {};
+
+            // 基本情報を設定
+            details.physicalId = physicalId;
+            details.arn = this.constructArn(resourceType, physicalId);
+
             switch (resourceType) {
                 case 'VPC': {
                     command = `aws ec2 describe-vpcs --vpc-ids ${physicalId}`;
@@ -144,29 +217,27 @@ export class TokenResolver {
                     // サービス情報を取得
                     const serviceResource = this.cfnResources.find(r => r.ResourceType === 'AWS::ECS::Service');
                     if (serviceResource) {
-                        const serviceCommand = `aws ecs describe-services --cluster ${physicalId} --services ${serviceResource.PhysicalResourceId}`;
-                        const serviceInfo = JSON.parse(execSync(serviceCommand, { encoding: 'utf-8' }));
-                        const service = serviceInfo.services[0];
-
-                        return {
-                            cluster: {
-                                name: cluster.clusterName,
+                        const serviceDetails = await this.getEcsServiceDetails(physicalId, serviceResource.PhysicalResourceId);
+                        if (serviceDetails) {
+                            return {
+                                cluster: {
+                                    name: cluster.clusterName,
+                                    arn: cluster.clusterArn
+                                },
+                                service: serviceDetails,
+                                physicalId: physicalId,
                                 arn: cluster.clusterArn
-                            },
-                            service: {
-                                name: service.serviceName,
-                                arn: service.serviceArn,
-                                status: service.status,
-                                desiredCount: service.desiredCount,
-                                runningCount: service.runningCount
-                            }
-                        };
+                            };
+                        }
                     }
+
                     return {
                         cluster: {
                             name: cluster.clusterName,
                             arn: cluster.clusterArn
-                        }
+                        },
+                        physicalId: physicalId,
+                        arn: cluster.clusterArn
                     };
                 }
                 default:
@@ -241,9 +312,45 @@ export class TokenResolver {
 
         const result: any = {};
         for (const [key, value] of Object.entries(obj)) {
-            result[key] = this.resolvePropertyTokens(value);
+            if (value === null) {
+                result[key] = null;
+            } else if (value === '[object Object]') {
+                result[key] = {};
+            } else if (typeof value === 'object') {
+                const resolvedObj = this.resolvePropertyTokens(value);
+                if (Object.keys(resolvedObj).length === 0) {
+                    result[key] = {};
+                } else {
+                    result[key] = resolvedObj;
+                }
+            } else {
+                const resolvedValue = this.resolveSingleToken(value);
+                if (resolvedValue && typeof resolvedValue === 'string' && resolvedValue.includes('${Token[')) {
+                    // トークンが解決できなかった場合、CloudFormation出力から探す
+                    const tokenValue = this.findValueInOutputs(resolvedValue);
+                    result[key] = tokenValue || resolvedValue;
+                } else {
+                    result[key] = resolvedValue;
+                }
+            }
         }
         return result;
+    }
+
+    /**
+     * CloudFormation出力値からトークンの値を探す
+     */
+    private findValueInOutputs(token: string): string | null {
+        const tokenKey = token.match(/\${Token\[([^\]]+)\]}/)?.[1];
+        if (!tokenKey) return null;
+
+        // 出力値を検索
+        const output = this.cfnOutputs.find(o =>
+            o.OutputKey.includes(tokenKey) ||
+            o.OutputValue?.includes(tokenKey)
+        );
+
+        return output?.OutputValue || null;
     }
 
     /**

@@ -218,26 +218,38 @@ function formatResourceInfo(resource: Resource, cfnResource?: CloudFormationReso
 
     output.push('プロパティ:');
 
-    Object.entries(resource.properties).forEach(([key, value]) => {
+    function formatValue(value: any, indent: number = 2): string[] {
+        const lines: string[] = [];
+        const spaces = ' '.repeat(indent);
+
         if (Array.isArray(value)) {
-            output.push(`  ${key}:`);
             value.forEach(item => {
-                if (typeof item === 'object') {
-                    Object.entries(item).forEach(([k, v]) => {
-                        output.push(`    - ${k}: ${v}`);
-                    });
+                if (typeof item === 'object' && item !== null) {
+                    const objLines = formatValue(item, indent + 2);
+                    lines.push(`${spaces}-`);
+                    lines.push(...objLines);
                 } else {
-                    output.push(`    - ${item}`);
+                    lines.push(`${spaces}- ${item}`);
                 }
             });
-        } else if (typeof value === 'object') {
-            output.push(`  ${key}:`);
+        } else if (typeof value === 'object' && value !== null) {
             Object.entries(value).forEach(([k, v]) => {
-                output.push(`    ${k}: ${v}`);
+                if (typeof v === 'object' && v !== null) {
+                    lines.push(`${spaces}${k}:`);
+                    lines.push(...formatValue(v, indent + 2));
+                } else {
+                    lines.push(`${spaces}${k}: ${v}`);
+                }
             });
         } else {
-            output.push(`  ${key}: ${value}`);
+            lines.push(`${spaces}${value}`);
         }
+        return lines;
+    }
+
+    Object.entries(resource.properties).forEach(([key, value]) => {
+        output.push(`  ${key}:`);
+        output.push(...formatValue(value, 4));
     });
 
     return output.join('\n');

@@ -41,3 +41,4 @@ coverage/
 
 # Resource information files
 resource-info/*.json
+projects/*
