@@ -5,9 +5,7 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as route53 from 'aws-cdk-lib/aws-route53';
-import * as targets from 'aws-cdk-lib/aws-route53-targets';
-import * as elasticloadbalancingv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { ResourceRecorder } from './utils/resource-recorder';
 import { TagPolicyManager } from './utils/tag-policies';
 
@@ -105,6 +103,36 @@ export class SmallScaleStack extends cdk.Stack {
             containerInsights: true,
         });
 
+        // IAMタスクロールを追加
+        const taskRole = new iam.Role(this, 'SmallScaleTaskRole', {
+            assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        });
+
+        // S3アクセス権限の追加（Get/Put/List）
+        taskRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                's3:GetObject',
+                's3:PutObject',
+                's3:ListBucket'
+            ],
+            resources: [
+                staticFilesBucket.bucketArn,
+                `${staticFilesBucket.bucketArn}/*`
+            ],
+        }));
+
+        // RDSへのアクセス権限 (Connect / Describe)
+        taskRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                'rds:DescribeDBInstances',
+                'rds:Connect'
+            ],
+            // 一例として "*" にしていますが、必要に応じてDBインスタンス単位で制限してください
+            resources: ['*']
+        }));
+
         // ALBとFargateサービスの作成
         const loadBalancedFargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'SmallScaleService', {
             cluster,
@@ -118,6 +146,7 @@ export class SmallScaleStack extends cdk.Stack {
                     DATABASE_URL: `postgresql://${databaseInstance.instanceEndpoint.hostname}:5432/app`,
                     S3_BUCKET: staticFilesBucket.bucketName,
                 },
+                taskRole: taskRole,
             },
             assignPublicIp: false,
         });
