@@ -6,6 +6,7 @@ import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import { ResourceRecorder } from './utils/resource-recorder';
 import { TagPolicyManager } from './utils/tag-policies';
 
@@ -59,6 +60,21 @@ export class SmallScaleStack extends cdk.Stack {
 
         // VPC情報の記録
         recorder.recordVpc(vpc, this.stackName);
+
+        // ECRリポジトリの作成
+        const repository = new ecr.Repository(this, 'AppRepository', {
+            repositoryName: `${props.projectName}-${props.environment || 'development'}`,
+            removalPolicy: cdk.RemovalPolicy.RETAIN,
+            imageScanOnPush: true,
+        });
+
+        // タスク実行ロールの作成
+        const executionRole = new iam.Role(this, 'EcsTaskExecutionRole', {
+            assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+            managedPolicies: [
+                iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')
+            ]
+        });
 
         // RDSの作成（Single-AZ）
         const databaseInstance = new rds.DatabaseInstance(this, 'SmallScaleDB', {
@@ -147,6 +163,7 @@ export class SmallScaleStack extends cdk.Stack {
                     S3_BUCKET: staticFilesBucket.bucketName,
                 },
                 taskRole: taskRole,
+                executionRole: executionRole,
             },
             assignPublicIp: false,
         });
@@ -185,6 +202,11 @@ export class SmallScaleStack extends cdk.Stack {
         new cdk.CfnOutput(this, 'S3BucketName', {
             value: staticFilesBucket.bucketName,
             description: 'Static Files S3 Bucket Name',
+        });
+
+        new cdk.CfnOutput(this, 'EcrRepositoryName', {
+            value: repository.repositoryName,
+            description: 'ECR Repository Name',
         });
     }
 }
