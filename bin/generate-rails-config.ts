@@ -20,6 +20,10 @@ interface ResourceConfig {
         endpoint: string;
         force_path_style: boolean;
     };
+    ecr: {
+        repository_name: string;
+        registry: string;
+    };
     aws: {
         region: string;
         vpc_id: string;
@@ -135,6 +139,7 @@ async function getResourceInfo(stackName: string): Promise<{
     ecsService: CloudFormationResource;
     ecsTaskDef: CloudFormationResource;
     logGroup: CloudFormationResource;
+    ecrRepository: string;
 }> {
     const resources = await getCloudFormationResources(stackName);
     const outputs = await getCloudFormationOutputs(stackName);
@@ -190,6 +195,12 @@ async function getResourceInfo(stackName: string): Promise<{
         throw new Error('ロードバランサーDNSが見つかりません');
     }
 
+    // ECRリポジトリ名を取得
+    const ecrRepoName = outputs.find(o => o.OutputKey === 'EcrRepositoryName')?.OutputValue;
+    if (!ecrRepoName) {
+        throw new Error('ECRリポジトリ名が見つかりません');
+    }
+
     return {
         dbInstanceId: rdsResource.PhysicalResourceId,
         dbSecretArn: secretResource.PhysicalResourceId,
@@ -199,7 +210,8 @@ async function getResourceInfo(stackName: string): Promise<{
         ecsCluster,
         ecsService,
         ecsTaskDef,
-        logGroup
+        logGroup,
+        ecrRepository: ecrRepoName
     };
 }
 
@@ -241,6 +253,10 @@ async function generateConfig(projectName: string, environment: string = 'develo
             region: region,
             vpc_id: resourceInfo.vpcId,
             account_id: accountId
+        },
+        ecr: {
+            repository_name: resourceInfo.ecrRepository,
+            registry: `${accountId}.dkr.ecr.${region}.amazonaws.com`
         },
         ecs: {
             cluster_name: resourceInfo.ecsCluster.PhysicalResourceId,
