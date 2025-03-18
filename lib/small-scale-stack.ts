@@ -7,6 +7,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as logs from 'aws-cdk-lib/aws-logs';  // ★ 追加
 import { ResourceRecorder } from './utils/resource-recorder';
 import { TagPolicyManager } from './utils/tag-policies';
 
@@ -164,6 +165,13 @@ export class SmallScaleStack extends cdk.Stack {
                 },
                 taskRole: taskRole,
                 executionRole: executionRole,
+                // ★ ここでCloudWatch Logsを有効にする
+                enableLogging: true,
+                logDriver: new ecs.AwsLogDriver({
+                    streamPrefix: 'MyNginx',
+                    // ログの保持期間などオプション設定 (1週間保持する例)
+                    logRetention: logs.RetentionDays.ONE_WEEK,
+                }),
             },
             assignPublicIp: false,
         });
